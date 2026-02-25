@@ -8,7 +8,7 @@ A live geospatial tracker that displays aircraft positions over **New York City*
 
 ## Architecture
 
-```
+```text
 OpenSky Network API (free)
         │  aircraft positions (JSON)
         ▼
@@ -45,14 +45,14 @@ cp .env.example .env
 
 Open `.env` and fill in:
 
-```
+```text
 MAPBOX_TOKEN=pk.eyJ1IjoiL...          # from account.mapbox.com/access-tokens
 VITE_MAPBOX_TOKEN=pk.eyJ1IjoiL...     # same token (needed by Vite build)
 ```
 
 OpenSky credentials are optional — anonymous access works but has lower rate limits (5 req/10s):
 
-```
+```text
 OPENSKY_USERNAME=your_opensky_username
 OPENSKY_PASSWORD=your_opensky_password
 ```
@@ -100,7 +100,7 @@ docker compose up --build
 
 ## Project Structure
 
-```
+```text
 geospatial-tracker/
 ├── backend/
 │   ├── main.py              # FastAPI + WebSocket broadcast hub
