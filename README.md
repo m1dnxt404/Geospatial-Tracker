@@ -1,26 +1,26 @@
-# World Monitor — Real-Time Aircraft Tracker
+# World Monitor — Real-Time Global Aircraft Tracker
 
-A live geospatial tracker that displays aircraft positions over **New York City** using the OpenSky Network API. Built with FastAPI (WebSocket backend) and React + Mapbox GL JS (frontend).
+A live geospatial tracker that displays **all aircraft in the world** in real time using the OpenSky Network API. Built with FastAPI (WebSocket backend) and React + Leaflet + OpenStreetMap (frontend).
 
-**Running cost: $0** — all components use free tiers.
+**Running cost: $0 — no API keys, no accounts required.**
 
 ---
 
 ## Architecture
 
 ```text
-OpenSky Network API (free)
-        │  aircraft positions (JSON)
+OpenSky Network API (free, no key)
+        │  5,000–10,000 aircraft positions (JSON)
         ▼
   FastAPI Backend
-  ├── ingestion/opensky.py   — fetches aircraft every 10s
+  ├── ingestion/opensky.py   — fetches all global aircraft every 10s
   ├── main.py                — WebSocket hub, broadcasts GeoJSON
         │  GeoJSON FeatureCollection (WebSocket)
         ▼
   React Frontend
   ├── useWebSocket.ts        — live connection with auto-reconnect
-  ├── LiveMap.tsx            — Mapbox GL JS dark map
-  └── HUD.tsx                — overlay: count, status, timestamp
+  ├── LiveMap.tsx            — Leaflet + Carto Dark map
+  └── HUD.tsx                — overlay: aircraft count, status, timestamp
 ```
 
 ---
@@ -29,28 +29,22 @@ OpenSky Network API (free)
 
 - **Python 3.11+**
 - **Node.js 20+** and **npm**
-- A **Mapbox** account (free) — get your token at [account.mapbox.com](https://account.mapbox.com)
 - **Docker + Docker Compose** (optional, for containerised setup)
+
+No API keys or accounts needed.
 
 ---
 
 ## Setup
 
-### 1. Clone and configure environment
+### 1. Configure environment
 
 ```bash
 cd "Geospatial Tracker"
 cp .env.example .env
 ```
 
-Open `.env` and fill in:
-
-```text
-MAPBOX_TOKEN=pk.eyJ1IjoiL...          # from account.mapbox.com/access-tokens
-VITE_MAPBOX_TOKEN=pk.eyJ1IjoiL...     # same token (needed by Vite build)
-```
-
-OpenSky credentials are optional — anonymous access works but has lower rate limits (5 req/10s):
+The default `.env` works out of the box. Optionally add OpenSky credentials for higher rate limits:
 
 ```text
 OPENSKY_USERNAME=your_opensky_username
@@ -90,36 +84,48 @@ docker compose up --build
 
 ## Usage
 
-- The map opens centred on **New York City** at zoom 10
-- **Blue/green/red dots** = aircraft coloured by altitude (green = low, red = high altitude, grey = on ground)
-- **Click any dot** → popup with callsign, origin, altitude, speed, heading
-- The **HUD (top-left)** shows live aircraft count, connection status, and last update time
+- The map opens at **world view** showing all tracked aircraft globally
+- **Dot colours** indicate altitude:
+  - **Green** — low altitude (< 1,000 m) / approaching or departing
+  - **Orange** — mid altitude (1,000–7,000 m)
+  - **Red** — cruise altitude (> 7,000 m)
+  - **Grey** — on the ground
+- **Click any dot** → popup with callsign, origin country, altitude, speed, and heading
+- The **HUD (top-left)** shows live aircraft count, connection status (`LIVE` / `CONNECTING` / `OFFLINE`), and last update time
 - Data refreshes every **10 seconds** automatically
+- The map reconnects automatically if the backend restarts
 
 ---
 
 ## Project Structure
 
 ```text
-geospatial-tracker/
+Geospatial Tracker/
 ├── backend/
 │   ├── main.py              # FastAPI + WebSocket broadcast hub
-│   ├── config.py            # Settings (env vars, NYC bbox)
+│   ├── config.py            # Settings loaded from .env
+│   ├── requirements.txt
+│   ├── Dockerfile
 │   ├── ingestion/
-│   │   └── opensky.py       # OpenSky Network API client
+│   │   └── opensky.py       # OpenSky Network API client (global fetch)
 │   ├── models/
-│   │   └── schemas.py       # Pydantic data models
-│   └── tests/               # Unit tests (pytest)
+│   │   └── schemas.py       # Pydantic v2 data models
+│   └── tests/               # Unit tests (pytest + pytest-asyncio)
 ├── frontend/
-│   └── src/
-│       ├── App.tsx
-│       ├── types.ts
-│       ├── hooks/useWebSocket.ts
-│       └── components/
-│           ├── LiveMap.tsx
-│           └── HUD.tsx
+│   ├── src/
+│   │   ├── App.tsx           # Root component
+│   │   ├── types.ts          # TypeScript interfaces (mirrors backend schemas)
+│   │   ├── hooks/
+│   │   │   └── useWebSocket.ts  # WS hook with exponential backoff reconnect
+│   │   └── components/
+│   │       ├── LiveMap.tsx   # Leaflet map + aircraft markers + popups
+│   │       └── HUD.tsx       # Status overlay panel
+│   ├── Dockerfile
+│   └── package.json
 ├── docker-compose.yml
-└── .env.example
+├── .env.example
+├── Enhancements.md
+└── README.md
 ```
 
 ---
@@ -128,12 +134,10 @@ geospatial-tracker/
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `MAPBOX_TOKEN` | Yes | — | Mapbox public access token |
-| `VITE_MAPBOX_TOKEN` | Yes | — | Same token (Vite build-time injection) |
-| `OPENSKY_USERNAME` | No | — | OpenSky account (higher rate limits) |
-| `OPENSKY_PASSWORD` | No | — | OpenSky password |
+| `OPENSKY_USERNAME` | No | — | OpenSky account for higher rate limits |
+| `OPENSKY_PASSWORD` | No | — | OpenSky account password |
 | `POLLING_INTERVAL_SECONDS` | No | `10` | How often to fetch aircraft data |
-| `VITE_WS_URL` | No | `ws://localhost:8000/ws/live` | WebSocket URL |
+| `VITE_WS_URL` | No | `ws://localhost:8000/ws/live` | WebSocket URL (frontend) |
 
 ---
 
@@ -141,7 +145,6 @@ geospatial-tracker/
 
 ```bash
 cd backend
-pip install -r requirements.txt
 pytest tests/ -v
 ```
 
@@ -151,8 +154,8 @@ pytest tests/ -v
 
 | Endpoint | Method | Description |
 | --- | --- | --- |
-| `/health` | GET | Health check — returns connection count and poll interval |
-| `/ws/live` | WebSocket | Live GeoJSON stream, pushed every 10s |
+| `/health` | GET | Returns connection count and polling interval |
+| `/ws/live` | WebSocket | Live GeoJSON stream pushed every 10s |
 
 **WebSocket message format:**
 
@@ -176,16 +179,29 @@ pytest tests/ -v
       }
     ]
   },
-  "aircraft_count": 42,
+  "aircraft_count": 8241,
   "timestamp": 1700000000.0
 }
 ```
 
 ---
 
+## OpenSky Rate Limits
+
+| Access type | Limit | How to enable |
+| --- | --- | --- |
+| Anonymous | 400 API credits/day (~40 requests) | Default, no setup needed |
+| Registered (free) | 4,000 credits/day | Add `OPENSKY_USERNAME` + `OPENSKY_PASSWORD` to `.env` |
+
+At a 10-second polling interval, anonymous access uses ~8,640 requests/day — register a free account at [opensky-network.org](https://opensky-network.org) to avoid hitting the limit.
+
+---
+
 ## Extending the Project
 
-- **Wider coverage**: Adjust `BBOX_LAMIN/LOMIN/LAMAX/LOMAX` in `.env` or `config.py`
-- **Different city**: Change the bbox values and map center in [frontend/src/components/LiveMap.tsx](frontend/src/components/LiveMap.tsx#L28)
-- **Faster updates**: Lower `POLLING_INTERVAL_SECONDS` (respect OpenSky rate limits)
-- **Aircraft trails**: Add a `LineString` layer and store position history per `icao24`
+See [Enhancements.md](Enhancements.md) for the full roadmap. Quick wins:
+
+- **Faster updates**: Lower `POLLING_INTERVAL_SECONDS` in `.env` (respect rate limits above)
+- **Focus on a region**: Add bbox params to the OpenSky call in [backend/ingestion/opensky.py](backend/ingestion/opensky.py)
+- **Smoother rendering**: Switch Leaflet to Canvas renderer in [frontend/src/components/LiveMap.tsx](frontend/src/components/LiveMap.tsx) for 10k+ markers
+- **Aircraft trails**: Store position history per `icao24` and add a `LineString` layer
