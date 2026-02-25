@@ -53,25 +53,18 @@ def _parse_state_vector(state: list) -> Optional[AircraftPosition]:
 
 
 async def fetch_aircraft() -> list[AircraftPosition]:
-    """Fetch live aircraft positions from OpenSky for the configured bounding box.
+    """Fetch all live aircraft positions globally from OpenSky.
 
     Returns an empty list on any network failure — never raises.
     Rate limits: 5 req/10s anonymous, higher with credentials.
     """
-    params = {
-        "lamin": settings.BBOX_LAMIN,
-        "lomin": settings.BBOX_LOMIN,
-        "lamax": settings.BBOX_LAMAX,
-        "lomax": settings.BBOX_LOMAX,
-    }
-
     auth = None
     if settings.OPENSKY_USERNAME and settings.OPENSKY_PASSWORD:
         auth = (settings.OPENSKY_USERNAME, settings.OPENSKY_PASSWORD)
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(OPENSKY_URL, params=params, auth=auth)
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(OPENSKY_URL, auth=auth)
             response.raise_for_status()
             data = response.json()
 

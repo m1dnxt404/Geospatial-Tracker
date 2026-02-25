@@ -30,7 +30,7 @@ export const HUD: React.FC<HUDProps> = ({ aircraftCount, status, lastUpdated }) 
         position: "absolute",
         top: 16,
         left: 16,
-        zIndex: 10,
+        zIndex: 1000,
         background: "rgba(15, 23, 42, 0.85)",
         backdropFilter: "blur(8px)",
         border: "1px solid rgba(148, 163, 184, 0.15)",

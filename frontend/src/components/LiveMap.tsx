@@ -47,9 +47,10 @@ export const LiveMap: React.FC<LiveMapProps> = ({ data }) => {
     if (!containerRef.current || mapRef.current) return;
 
     const map = L.map(containerRef.current, {
-      center: [40.7128, -74.006],
-      zoom: 10,
+      center: [20, 0],
+      zoom: 2,
       zoomControl: false,
+      minZoom: 2,
     });
 
     // Carto Dark Matter — free, no API key required
@@ -100,5 +101,10 @@ export const LiveMap: React.FC<LiveMapProps> = ({ data }) => {
     }
   }, [data]);
 
-  return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
+  return (
+    <div
+      ref={containerRef}
+      style={{ width: "100%", height: "100%", isolation: "isolate" }}
+    />
+  );
 };
