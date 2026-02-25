@@ -17,5 +17,9 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src"],
+  "exclude": [
+    "src/components/LiveMap.tsx",
+    "src/components/HUD.tsx"
+  ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

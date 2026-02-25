@@ -1,6 +1,6 @@
-# World Monitor — Real-Time Global Aircraft Tracker
+# WorldView — Real-Time 3D Geospatial Surveillance Platform
 
-A live geospatial tracker that displays **all aircraft in the world** in real time using the OpenSky Network API. Built with FastAPI (WebSocket backend) and React + Leaflet + OpenStreetMap (frontend).
+A live 3D geospatial tracker that displays **aircraft, military flights, satellites, and earthquakes** on a rotating globe in real time. Built with FastAPI (WebSocket backend) and React + CesiumJS (3D frontend). Includes CRT, Night Vision, and FLIR thermal visual modes.
 
 **Running cost: $0 — no API keys, no accounts required.**
 
@@ -9,19 +9,40 @@ A live geospatial tracker that displays **all aircraft in the world** in real ti
 ## Architecture
 
 ```text
-OpenSky Network API (free, no key)
-        │  5,000–10,000 aircraft positions (JSON)
-        ▼
-  FastAPI Backend
-  ├── ingestion/opensky.py   — fetches all global aircraft every 10s
-  ├── main.py                — WebSocket hub, broadcasts GeoJSON
-        │  GeoJSON FeatureCollection (WebSocket)
-        ▼
-  React Frontend
-  ├── useWebSocket.ts        — live connection with auto-reconnect
-  ├── LiveMap.tsx            — Leaflet + Carto Dark map
-  └── HUD.tsx                — overlay: aircraft count, status, timestamp
+CelesTrak TLE   OpenSky   ADS-B Exchange   USGS Earthquakes
+      │             │            │                 │
+      └─────────────▼────────────▼─────────────────▼──────┐
+                       FastAPI Backend                      │
+           ingestion/opensky.py      — civil aircraft       │
+           ingestion/adsb_exchange.py — military aircraft   │
+           ingestion/celestrak.py   — satellite positions   │
+           ingestion/usgs.py        — earthquake events     │
+                                                            │
+           broadcast_loop() → WorldPayload (4× GeoJSON)     │
+      ┌────────────────────────────────────────────────────┘
+      │  WebSocket /ws/live
+      ▼
+React Frontend
+  GlobeView.tsx  (CesiumJS 3D globe, CartoDB dark tiles)
+  ├── Aircraft layer   — white/cyan dots coloured by altitude
+  ├── Military layer   — red dots (ADS-B Exchange or ICAO filter)
+  ├── Satellite layer  — cyan dots at real orbital altitude
+  ├── Earthquake layer — orange/red dots sized by magnitude
+  └── PostProcessStage — CRT / Night Vision / FLIR shaders
+  ControlPanel.tsx — layer toggles + visual mode buttons
+  CameraPresets.tsx — one-click flyTo for 8 world cities
 ```
+
+---
+
+## Data Sources
+
+| Layer | Source | Endpoint | Cost | Refresh |
+| --- | --- | --- | --- | --- |
+| Aircraft | OpenSky Network | `/api/states/all` | Free | 10 s |
+| Military | ADS-B Exchange | `/v2/mil/` (fallback: ICAO prefix filter) | Free | 10 s |
+| Satellites | CelesTrak + sgp4 | `celestrak.org/SOCRATES/active.txt` | Free | TLE 30 min, positions live |
+| Earthquakes | USGS FDSNWS | `/fdsnws/event/1/query?minmagnitude=2.5` | Free | 60 s |
 
 ---
 
@@ -29,7 +50,7 @@ OpenSky Network API (free, no key)
 
 - **Python 3.11+**
 - **Node.js 20+** and **npm**
-- **Docker + Docker Compose** (optional, for containerised setup)
+- **Docker + Docker Compose** (optional)
 
 No API keys or accounts needed.
 
@@ -44,11 +65,15 @@ cd "Geospatial Tracker"
 cp .env.example .env
 ```
 
-The default `.env` works out of the box. Optionally add OpenSky credentials for higher rate limits:
+The default `.env` works out of the box. Optional extras:
 
 ```text
+# Higher OpenSky rate limits
 OPENSKY_USERNAME=your_opensky_username
 OPENSKY_PASSWORD=your_opensky_password
+
+# Military aircraft via ADS-B Exchange (falls back to ICAO prefix filter without this)
+ADSB_API_KEY=your_adsb_exchange_key
 ```
 
 ### 2. Run locally (without Docker)
@@ -84,16 +109,36 @@ docker compose up --build
 
 ## Usage
 
-- The map opens at **world view** showing all tracked aircraft globally
-- **Dot colours** indicate altitude:
-  - **Green** — low altitude (< 1,000 m) / approaching or departing
-  - **Orange** — mid altitude (1,000–7,000 m)
-  - **Red** — cruise altitude (> 7,000 m)
-  - **Grey** — on the ground
-- **Click any dot** → popup with callsign, origin country, altitude, speed, and heading
-- The **HUD (top-left)** shows live aircraft count, connection status (`LIVE` / `CONNECTING` / `OFFLINE`), and last update time
-- Data refreshes every **10 seconds** automatically
-- The map reconnects automatically if the backend restarts
+### Globe Navigation
+
+- **Drag** — rotate the globe
+- **Scroll** — zoom in / out
+- **Right-drag** — tilt the camera
+
+### Data Layers (left panel)
+
+| Layer | Colour | Description |
+| --- | --- | --- |
+| Aircraft | White → Cyan | Civil flights; cyan = high altitude (> 9,000 m) |
+| Military | Red | Military aircraft via ADS-B Exchange or ICAO prefix fallback |
+| Satellites | Cyan | Up to 2,000 active satellites at real orbital altitude |
+| Earthquakes | Orange → Red | M2.5+ events sized by magnitude |
+
+Click the coloured button beside each layer name to toggle it on or off.
+
+### Visual Modes (left panel)
+
+| Mode | Effect |
+| --- | --- |
+| **NORMAL** | Default rendering |
+| **CRT** | Scanlines + vignette + green tint |
+| **NV** | Night Vision — green monochrome with film grain |
+| **FLIR** | Thermal palette — black → purple → red → yellow → white |
+
+### Camera Presets (bottom bar)
+
+Click any city to instantly fly the camera there:
+**New York · London · Tokyo · Dubai · Los Angeles · Sydney · Singapore · Cairo**
 
 ---
 
@@ -102,24 +147,30 @@ docker compose up --build
 ```text
 Geospatial Tracker/
 ├── backend/
-│   ├── main.py              # FastAPI + WebSocket broadcast hub
-│   ├── config.py            # Settings loaded from .env
+│   ├── main.py                  # FastAPI + WebSocket broadcast hub (WorldPayload)
+│   ├── config.py                # Settings loaded from .env
 │   ├── requirements.txt
 │   ├── Dockerfile
 │   ├── ingestion/
-│   │   └── opensky.py       # OpenSky Network API client (global fetch)
+│   │   ├── opensky.py           # OpenSky Network — civil aircraft (global)
+│   │   ├── adsb_exchange.py     # ADS-B Exchange — military aircraft
+│   │   ├── celestrak.py         # CelesTrak TLE + sgp4 — satellite positions
+│   │   └── usgs.py              # USGS FDSNWS — earthquake events
 │   ├── models/
-│   │   └── schemas.py       # Pydantic v2 data models
-│   └── tests/               # Unit tests (pytest + pytest-asyncio)
+│   │   └── schemas.py           # Pydantic v2 models (WorldPayload + all layers)
+│   └── tests/                   # Unit tests (pytest + pytest-asyncio)
 ├── frontend/
 │   ├── src/
-│   │   ├── App.tsx           # Root component
-│   │   ├── types.ts          # TypeScript interfaces (mirrors backend schemas)
+│   │   ├── App.tsx              # Root — wires layers, visualMode, viewer ref
+│   │   ├── types.ts             # TypeScript interfaces (WorldPayload, all layers)
+│   │   ├── vite-env.d.ts        # Vite client type reference
 │   │   ├── hooks/
 │   │   │   └── useWebSocket.ts  # WS hook with exponential backoff reconnect
 │   │   └── components/
-│   │       ├── LiveMap.tsx   # Leaflet map + aircraft markers + popups
-│   │       └── HUD.tsx       # Status overlay panel
+│   │       ├── GlobeView.tsx    # CesiumJS 3D globe + 4 data layers + GLSL shaders
+│   │       ├── ControlPanel.tsx # Layer toggles + visual mode selector
+│   │       └── CameraPresets.tsx# 8-city flyTo shortcuts
+│   ├── vite.config.ts           # Vite + vite-plugin-cesium
 │   ├── Dockerfile
 │   └── package.json
 ├── docker-compose.yml
@@ -136,8 +187,9 @@ Geospatial Tracker/
 | --- | --- | --- | --- |
 | `OPENSKY_USERNAME` | No | — | OpenSky account for higher rate limits |
 | `OPENSKY_PASSWORD` | No | — | OpenSky account password |
-| `POLLING_INTERVAL_SECONDS` | No | `10` | How often to fetch aircraft data |
-| `VITE_WS_URL` | No | `ws://localhost:8000/ws/live` | WebSocket URL (frontend) |
+| `ADSB_API_KEY` | No | — | ADS-B Exchange key; falls back to ICAO filter without it |
+| `POLLING_INTERVAL_SECONDS` | No | `10` | How often to fetch all data sources |
+| `VITE_WS_URL` | No | `ws://localhost:8000/ws/live` | WebSocket URL override (frontend) |
 
 ---
 
@@ -155,45 +207,48 @@ pytest tests/ -v
 | Endpoint | Method | Description |
 | --- | --- | --- |
 | `/health` | GET | Returns connection count and polling interval |
-| `/ws/live` | WebSocket | Live GeoJSON stream pushed every 10s |
+| `/ws/live` | WebSocket | WorldPayload pushed every 10 s |
 
 **WebSocket message format:**
 
 ```json
 {
-  "geojson": {
-    "type": "FeatureCollection",
-    "features": [
-      {
-        "type": "Feature",
-        "geometry": { "type": "Point", "coordinates": [-73.9, 40.7] },
-        "properties": {
-          "icao24": "a1b2c3",
-          "callsign": "UAL123",
-          "origin_country": "United States",
-          "altitude": 10000,
-          "velocity": 250,
-          "heading": 270,
-          "on_ground": false
-        }
-      }
-    ]
+  "aircraft":   { "type": "FeatureCollection", "features": [...] },
+  "military":   { "type": "FeatureCollection", "features": [...] },
+  "satellites": { "type": "FeatureCollection", "features": [...] },
+  "earthquakes":{ "type": "FeatureCollection", "features": [...] },
+  "counts": {
+    "aircraft": 8241,
+    "military": 87,
+    "satellites": 1923,
+    "earthquakes": 47
   },
-  "aircraft_count": 8241,
   "timestamp": 1700000000.0
 }
 ```
 
+Satellite coordinates include altitude as the third element: `[lon, lat, altMeters]`.
+
 ---
 
-## OpenSky Rate Limits
+## Rate Limits
+
+### OpenSky Network
 
 | Access type | Limit | How to enable |
 | --- | --- | --- |
-| Anonymous | 400 API credits/day (~40 requests) | Default, no setup needed |
-| Registered (free) | 4,000 credits/day | Add `OPENSKY_USERNAME` + `OPENSKY_PASSWORD` to `.env` |
+| Anonymous | 400 credits/day (~40 requests) | Default, no setup needed |
+| Registered (free) | 4,000 credits/day | Add credentials to `.env` |
 
-At a 10-second polling interval, anonymous access uses ~8,640 requests/day — register a free account at [opensky-network.org](https://opensky-network.org) to avoid hitting the limit.
+At 10 s polling, anonymous access uses ~8,640 requests/day — register a free account at [opensky-network.org](https://opensky-network.org).
+
+### CelesTrak
+
+TLE data is cached for **30 minutes** per fetch to respect CelesTrak's free tier. Satellite positions are re-computed from cached TLEs on every broadcast cycle.
+
+### USGS Earthquakes
+
+Earthquake data is cached for **60 seconds**. The USGS endpoint is free with no authentication.
 
 ---
 
@@ -201,7 +256,8 @@ At a 10-second polling interval, anonymous access uses ~8,640 requests/day — r
 
 See [Enhancements.md](Enhancements.md) for the full roadmap. Quick wins:
 
-- **Faster updates**: Lower `POLLING_INTERVAL_SECONDS` in `.env` (respect rate limits above)
-- **Focus on a region**: Add bbox params to the OpenSky call in [backend/ingestion/opensky.py](backend/ingestion/opensky.py)
-- **Smoother rendering**: Switch Leaflet to Canvas renderer in [frontend/src/components/LiveMap.tsx](frontend/src/components/LiveMap.tsx) for 10k+ markers
-- **Aircraft trails**: Store position history per `icao24` and add a `LineString` layer
+- **Faster updates** — lower `POLLING_INTERVAL_SECONDS` in `.env` (respect rate limits above)
+- **More satellites** — raise `MAX_SATELLITES` in [backend/ingestion/celestrak.py](backend/ingestion/celestrak.py)
+- **Different basemap** — swap the CartoDB URL in [frontend/src/components/GlobeView.tsx](frontend/src/components/GlobeView.tsx) for any `{z}/{x}/{y}` tile server
+- **Aircraft trails** — store position history per `icao24` and draw `Polyline` primitives in GlobeView
+- **Click info panel** — add a `screenSpaceEventHandler` in GlobeView to show entity details on click

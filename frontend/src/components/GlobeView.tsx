@@ -1,0 +1,438 @@
+import { useEffect, useRef, useState } from "react";
+import * as Cesium from "cesium";
+import "cesium/Build/Cesium/Widgets/widgets.css";
+import type { WorldPayload, LayerVisibility, VisualMode } from "../types";
+
+interface GlobeViewProps {
+  payload: WorldPayload | null;
+  layers: LayerVisibility;
+  visualMode: VisualMode;
+  onViewerReady?: (viewer: Cesium.Viewer) => void;
+}
+
+interface SelectedInfo {
+  type: "aircraft" | "military" | "satellite" | "earthquake";
+  data: Record<string, unknown>;
+}
+
+// ── GLSL shaders ──────────────────────────────────────────────────────────────
+
+const CRT_SHADER = `
+uniform sampler2D colorTexture;
+in vec2 v_textureCoordinates;
+out vec4 fragColor;
+void main() {
+  vec2 uv = v_textureCoordinates;
+  vec4 c = texture(colorTexture, uv);
+  float scan = mod(floor(uv.y * 1200.0), 3.0);
+  if (scan < 1.0) c.rgb *= 0.4;
+  vec2 vig = uv - 0.5;
+  c.rgb *= clamp(1.0 - dot(vig, vig) * 3.0, 0.0, 1.0);
+  c.r *= 0.75;
+  c.b *= 0.60;
+  fragColor = c;
+}
+`;
+
+const NIGHT_VISION_SHADER = `
+uniform sampler2D colorTexture;
+in vec2 v_textureCoordinates;
+out vec4 fragColor;
+void main() {
+  vec4 c = texture(colorTexture, v_textureCoordinates);
+  float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+  float grain = fract(sin(dot(v_textureCoordinates * 300.0, vec2(12.9898, 78.233))) * 43758.5453) * 0.04;
+  lum = clamp(lum + grain, 0.0, 1.0);
+  fragColor = vec4(0.0, lum * 1.4, 0.0, 1.0);
+}
+`;
+
+const FLIR_SHADER = `
+uniform sampler2D colorTexture;
+in vec2 v_textureCoordinates;
+out vec4 fragColor;
+vec3 thermalPalette(float t) {
+  if (t < 0.25) return mix(vec3(0.0, 0.0, 0.0), vec3(0.5, 0.0, 0.5), t * 4.0);
+  if (t < 0.5)  return mix(vec3(0.5, 0.0, 0.5), vec3(1.0, 0.0, 0.0), (t - 0.25) * 4.0);
+  if (t < 0.75) return mix(vec3(1.0, 0.0, 0.0), vec3(1.0, 1.0, 0.0), (t - 0.5) * 4.0);
+  return mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 1.0, 1.0), (t - 0.75) * 4.0);
+}
+void main() {
+  vec4 c = texture(colorTexture, v_textureCoordinates);
+  float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+  fragColor = vec4(thermalPalette(lum), 1.0);
+}
+`;
+
+// ── Info panel helpers ────────────────────────────────────────────────────────
+
+const TYPE_META: Record<SelectedInfo["type"], { icon: string; label: string; color: string }> = {
+  aircraft:   { icon: "✈", label: "AIRCRAFT",   color: "#87CEEB" },
+  military:   { icon: "⬟", label: "MILITARY",   color: "#FF4444" },
+  satellite:  { icon: "◎", label: "SATELLITE",  color: "#00FFFF" },
+  earthquake: { icon: "⬡", label: "EARTHQUAKE", color: "#FF8C00" },
+};
+
+function fmt(value: unknown, unit = ""): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "number") return `${value.toLocaleString()}${unit ? " " + unit : ""}`;
+  return String(value);
+}
+
+function InfoPanel({
+  info,
+  onClose,
+}: {
+  info: SelectedInfo;
+  onClose: () => void;
+}) {
+  const meta = TYPE_META[info.type];
+  const d = info.data;
+
+  let rows: Array<[string, string]> = [];
+
+  if (info.type === "aircraft" || info.type === "military") {
+    rows = [
+      ["Callsign",    fmt(d.callsign) || "—"],
+      ["ICAO24",      fmt(d.icao24)],
+      ["Country",     fmt(d.origin_country) || "—"],
+      ["Altitude",    d.altitude != null ? `${Number(d.altitude).toLocaleString()} m` : "—"],
+      ["Speed",       d.velocity != null ? `${Number(d.velocity).toFixed(0)} m/s` : "—"],
+      ["Heading",     d.heading != null ? `${Number(d.heading).toFixed(0)}°` : "—"],
+      ["Vert. Rate",  d.vertical_rate != null ? `${Number(d.vertical_rate).toFixed(1)} m/s` : "—"],
+      ["Status",      d.on_ground ? "On ground" : "Airborne"],
+    ];
+  } else if (info.type === "satellite") {
+    rows = [
+      ["Name",        fmt(d.name)],
+      ["NORAD ID",    fmt(d.norad_id)],
+      ["Altitude",    d.altitude_km != null ? `${Number(d.altitude_km).toLocaleString()} km` : "—"],
+      ["Velocity",    d.velocity_km_s != null ? `${Number(d.velocity_km_s).toFixed(2)} km/s` : "—"],
+    ];
+  } else if (info.type === "earthquake") {
+    const ms = d.time_ms as number | null;
+    const timeStr = ms ? new Date(ms).toUTCString().slice(17, 25) + " UTC" : "—";
+    rows = [
+      ["Location",   fmt(d.place)],
+      ["Magnitude",  d.magnitude != null ? `M${Number(d.magnitude).toFixed(1)}` : "—"],
+      ["Depth",      d.depth_km != null ? `${Number(d.depth_km).toFixed(1)} km` : "—"],
+      ["Time",       timeStr],
+    ];
+  }
+
+  return (
+    <div style={panelStyles.container}>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <span style={{ ...panelStyles.typeLabel, color: meta.color }}>
+          {meta.icon} {meta.label}
+        </span>
+        <button style={panelStyles.closeBtn} onClick={onClose} aria-label="Close">✕</button>
+      </div>
+      <div style={{ ...panelStyles.divider, borderColor: meta.color + "44" }} />
+      {/* Data rows */}
+      {rows.map(([label, value]) => (
+        <div key={label} style={panelStyles.row}>
+          <span style={panelStyles.rowLabel}>{label}</span>
+          <span style={{ ...panelStyles.rowValue, color: label === "Callsign" || label === "Name" ? "#E2E8F0" : "#94A3B8" }}>
+            {value}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const panelStyles: Record<string, React.CSSProperties> = {
+  container: {
+    position: "absolute",
+    top: 16,
+    right: 16,
+    zIndex: 1000,
+    width: 230,
+    backgroundColor: "rgba(2, 6, 23, 0.90)",
+    border: "1px solid #1E293B",
+    borderRadius: 8,
+    padding: "12px 14px",
+    backdropFilter: "blur(12px)",
+    fontFamily: "'Courier New', Courier, monospace",
+    color: "#E2E8F0",
+    userSelect: "none",
+  },
+  typeLabel: {
+    fontSize: 13,
+    fontWeight: 700,
+    letterSpacing: "0.14em",
+  },
+  closeBtn: {
+    background: "none",
+    border: "none",
+    color: "#475569",
+    cursor: "pointer",
+    fontSize: 12,
+    padding: 2,
+    lineHeight: 1,
+  },
+  divider: {
+    height: 1,
+    borderTop: "1px solid",
+    marginBottom: 10,
+  },
+  row: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    marginBottom: 5,
+    gap: 8,
+  },
+  rowLabel: {
+    fontSize: 10,
+    letterSpacing: "0.1em",
+    color: "#475569",
+    flexShrink: 0,
+  },
+  rowValue: {
+    fontSize: 11,
+    textAlign: "right",
+    wordBreak: "break-word",
+  },
+};
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+export default function GlobeView({ payload, layers, visualMode, onViewerReady }: GlobeViewProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const viewerRef = useRef<Cesium.Viewer | null>(null);
+  const handlerRef = useRef<Cesium.ScreenSpaceEventHandler | null>(null);
+
+  const aircraftColRef = useRef<Cesium.PointPrimitiveCollection | null>(null);
+  const militaryColRef = useRef<Cesium.PointPrimitiveCollection | null>(null);
+  const satelliteColRef = useRef<Cesium.PointPrimitiveCollection | null>(null);
+  const earthquakeColRef = useRef<Cesium.PointPrimitiveCollection | null>(null);
+
+  const crtStageRef = useRef<Cesium.PostProcessStage | null>(null);
+  const nvStageRef = useRef<Cesium.PostProcessStage | null>(null);
+  const flirStageRef = useRef<Cesium.PostProcessStage | null>(null);
+
+  const [selectedInfo, setSelectedInfo] = useState<SelectedInfo | null>(null);
+
+  // ── Initialise viewer ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    Cesium.Ion.defaultAccessToken = "";
+
+    const viewer = new Cesium.Viewer(containerRef.current, {
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      animation: false,
+      timeline: false,
+      fullscreenButton: false,
+      navigationHelpButton: false,
+      sceneModePicker: false,
+    });
+
+    viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+
+    viewer.imageryLayers.removeAll();
+    viewer.imageryLayers.addImageryProvider(
+      new Cesium.UrlTemplateImageryProvider({
+        url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+        subdomains: ["a", "b", "c", "d"],
+        maximumLevel: 19,
+        credit: "© CartoDB © OpenStreetMap contributors",
+      })
+    );
+
+    if (viewer.scene.skyAtmosphere) {
+      viewer.scene.skyAtmosphere.show = true;
+    }
+    viewer.scene.globe.enableLighting = false;
+    viewer.scene.globe.atmosphereLightIntensity = 10.0;
+
+    try {
+      (viewer.cesiumWidget.creditContainer as HTMLElement).style.display = "none";
+    } catch {
+      // Ignore if unavailable
+    }
+
+    // ── Primitive collections ────────────────────────────────────────────────
+    const aircraftCol = viewer.scene.primitives.add(
+      new Cesium.PointPrimitiveCollection()
+    ) as Cesium.PointPrimitiveCollection;
+    const militaryCol = viewer.scene.primitives.add(
+      new Cesium.PointPrimitiveCollection()
+    ) as Cesium.PointPrimitiveCollection;
+    const satelliteCol = viewer.scene.primitives.add(
+      new Cesium.PointPrimitiveCollection()
+    ) as Cesium.PointPrimitiveCollection;
+    const earthquakeCol = viewer.scene.primitives.add(
+      new Cesium.PointPrimitiveCollection()
+    ) as Cesium.PointPrimitiveCollection;
+
+    aircraftColRef.current = aircraftCol;
+    militaryColRef.current = militaryCol;
+    satelliteColRef.current = satelliteCol;
+    earthquakeColRef.current = earthquakeCol;
+
+    // ── Post-process stages (disabled by default) ────────────────────────────
+    const crtStage = viewer.scene.postProcessStages.add(
+      new Cesium.PostProcessStage({ fragmentShader: CRT_SHADER, name: "wv_crt" })
+    ) as Cesium.PostProcessStage;
+    crtStage.enabled = false;
+
+    const nvStage = viewer.scene.postProcessStages.add(
+      new Cesium.PostProcessStage({ fragmentShader: NIGHT_VISION_SHADER, name: "wv_nv" })
+    ) as Cesium.PostProcessStage;
+    nvStage.enabled = false;
+
+    const flirStage = viewer.scene.postProcessStages.add(
+      new Cesium.PostProcessStage({ fragmentShader: FLIR_SHADER, name: "wv_flir" })
+    ) as Cesium.PostProcessStage;
+    flirStage.enabled = false;
+
+    crtStageRef.current = crtStage;
+    nvStageRef.current = nvStage;
+    flirStageRef.current = flirStage;
+
+    // ── Click handler ────────────────────────────────────────────────────────
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    handler.setInputAction(
+      (click: { position: Cesium.Cartesian2 }) => {
+        const picked = viewer.scene.pick(click.position);
+        if (Cesium.defined(picked) && picked.id) {
+          setSelectedInfo(picked.id as SelectedInfo);
+        } else {
+          setSelectedInfo(null);
+        }
+      },
+      Cesium.ScreenSpaceEventType.LEFT_CLICK
+    );
+    handlerRef.current = handler;
+
+    viewerRef.current = viewer;
+    onViewerReady?.(viewer);
+
+    return () => {
+      handlerRef.current?.destroy();
+      handlerRef.current = null;
+      viewerRef.current = null;
+      aircraftColRef.current = null;
+      militaryColRef.current = null;
+      satelliteColRef.current = null;
+      earthquakeColRef.current = null;
+      crtStageRef.current = null;
+      nvStageRef.current = null;
+      flirStageRef.current = null;
+      if (!viewer.isDestroyed()) {
+        viewer.destroy();
+      }
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Update primitives when payload arrives ─────────────────────────────────
+  useEffect(() => {
+    if (!payload) return;
+
+    const ac = aircraftColRef.current;
+    const mil = militaryColRef.current;
+    const sat = satelliteColRef.current;
+    const eq = earthquakeColRef.current;
+    if (!ac || !mil || !sat || !eq) return;
+
+    // Aircraft — white/cyan dots coloured by altitude
+    ac.removeAll();
+    for (const f of payload.aircraft.features) {
+      const [lon, lat] = f.geometry.coordinates as [number, number];
+      const alt = (f.properties.altitude as number | null) ?? 0;
+      const clampedAlt = Math.max(alt, 0);
+      const color =
+        alt > 9000
+          ? Cesium.Color.fromCssColorString("#00E5FF")
+          : alt > 4000
+          ? Cesium.Color.fromCssColorString("#87CEEB")
+          : Cesium.Color.WHITE;
+      ac.add({
+        position: Cesium.Cartesian3.fromDegrees(lon, lat, clampedAlt),
+        color,
+        pixelSize: 4,
+        outlineColor: color.withAlpha(0.25),
+        outlineWidth: 1,
+        id: { type: "aircraft", data: f.properties } satisfies SelectedInfo,
+      });
+    }
+
+    // Military — red dots
+    mil.removeAll();
+    for (const f of payload.military.features) {
+      const [lon, lat] = f.geometry.coordinates as [number, number];
+      const alt = Math.max((f.properties.altitude as number | null) ?? 0, 0);
+      mil.add({
+        position: Cesium.Cartesian3.fromDegrees(lon, lat, alt),
+        color: Cesium.Color.RED,
+        pixelSize: 6,
+        outlineColor: Cesium.Color.fromCssColorString("#FF4444").withAlpha(0.4),
+        outlineWidth: 2,
+        id: { type: "military", data: f.properties } satisfies SelectedInfo,
+      });
+    }
+
+    // Satellites — cyan dots at real orbital altitude (metres)
+    // disableDepthTestDistance prevents depth-clipping of high-altitude points
+    sat.removeAll();
+    for (const f of payload.satellites.features) {
+      const coords = f.geometry.coordinates as [number, number, number];
+      const [lon, lat, altM] = coords;
+      sat.add({
+        position: Cesium.Cartesian3.fromDegrees(lon, lat, altM ?? 400_000),
+        color: Cesium.Color.fromCssColorString("#00FFFF").withAlpha(0.9),
+        pixelSize: 5,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        id: { type: "satellite", data: f.properties } satisfies SelectedInfo,
+      });
+    }
+
+    // Earthquakes — orange/red dots sized by magnitude
+    eq.removeAll();
+    for (const f of payload.earthquakes.features) {
+      const [lon, lat] = f.geometry.coordinates as [number, number];
+      const mag = (f.properties.magnitude as number) ?? 2.5;
+      const size = Math.max(4, mag * 4);
+      const hue = Math.max(0.0, 0.09 - (mag - 2.5) / 55);
+      eq.add({
+        position: Cesium.Cartesian3.fromDegrees(lon, lat),
+        color: Cesium.Color.fromHsl(hue, 1.0, 0.55),
+        pixelSize: size,
+        outlineColor: Cesium.Color.YELLOW.withAlpha(0.3),
+        outlineWidth: 1,
+        id: { type: "earthquake", data: f.properties } satisfies SelectedInfo,
+      });
+    }
+  }, [payload]);
+
+  // ── Layer visibility ───────────────────────────────────────────────────────
+  useEffect(() => {
+    if (aircraftColRef.current) aircraftColRef.current.show = layers.aircraft;
+    if (militaryColRef.current) militaryColRef.current.show = layers.military;
+    if (satelliteColRef.current) satelliteColRef.current.show = layers.satellites;
+    if (earthquakeColRef.current) earthquakeColRef.current.show = layers.earthquakes;
+  }, [layers]);
+
+  // ── Visual mode shaders ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!crtStageRef.current || !nvStageRef.current || !flirStageRef.current) return;
+    crtStageRef.current.enabled = visualMode === "crt";
+    nvStageRef.current.enabled = visualMode === "nightvision";
+    flirStageRef.current.enabled = visualMode === "flir";
+  }, [visualMode]);
+
+  return (
+    <div style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+      <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
+      {selectedInfo && (
+        <InfoPanel info={selectedInfo} onClose={() => setSelectedInfo(null)} />
+      )}
+    </div>
+  );
+}

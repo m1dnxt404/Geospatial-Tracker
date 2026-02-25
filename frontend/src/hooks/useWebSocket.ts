@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { LivePayload, ConnectionStatus } from "../types";
+import type { WorldPayload, ConnectionStatus } from "../types";
 
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_DELAY_MS = 30000;
 const BACKOFF_MULTIPLIER = 1.5;
 
 interface UseWebSocketResult {
-  payload: LivePayload | null;
+  payload: WorldPayload | null;
   status: ConnectionStatus;
 }
 
 export function useWebSocket(url: string): UseWebSocketResult {
-  const [payload, setPayload] = useState<LivePayload | null>(null);
+  const [payload, setPayload] = useState<WorldPayload | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -35,7 +35,7 @@ export function useWebSocket(url: string): UseWebSocketResult {
     ws.onmessage = (event: MessageEvent) => {
       if (!isMountedRef.current) return;
       try {
-        const data = JSON.parse(event.data as string) as LivePayload;
+        const data = JSON.parse(event.data as string) as WorldPayload;
         setPayload(data);
       } catch {
         console.error("[useWebSocket] Failed to parse message");

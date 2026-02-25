@@ -17,9 +17,28 @@ class AircraftPosition(BaseModel):
     last_contact: Optional[int] = None
 
 
+class SatellitePosition(BaseModel):
+    norad_id: str
+    name: str
+    longitude: float
+    latitude: float
+    altitude_km: float
+    velocity_km_s: float
+
+
+class EarthquakeEvent(BaseModel):
+    id: str
+    magnitude: float
+    place: str
+    longitude: float
+    latitude: float
+    depth_km: float
+    time_ms: int
+
+
 class GeoJSONPoint(BaseModel):
     type: str = "Point"
-    coordinates: list[float]  # [longitude, latitude]
+    coordinates: list[float]  # [longitude, latitude] or [longitude, latitude, altitude]
 
 
 class GeoJSONFeature(BaseModel):
@@ -33,6 +52,16 @@ class GeoJSONFeatureCollection(BaseModel):
     features: list[GeoJSONFeature]
 
 
+class WorldPayload(BaseModel):
+    aircraft: GeoJSONFeatureCollection
+    military: GeoJSONFeatureCollection
+    satellites: GeoJSONFeatureCollection
+    earthquakes: GeoJSONFeatureCollection
+    counts: dict
+    timestamp: float = Field(default_factory=time.time)
+
+
+# Kept for backwards compatibility with existing tests
 class LivePayload(BaseModel):
     geojson: GeoJSONFeatureCollection
     aircraft_count: int

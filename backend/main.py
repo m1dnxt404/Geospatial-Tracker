@@ -7,11 +7,17 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from ingestion.opensky import fetch_aircraft
+from ingestion.adsb_exchange import fetch_military_aircraft
+from ingestion.celestrak import fetch_satellites
+from ingestion.usgs import fetch_earthquakes
 from models.schemas import (
+    AircraftPosition,
+    EarthquakeEvent,
     GeoJSONFeature,
     GeoJSONFeatureCollection,
     GeoJSONPoint,
-    LivePayload,
+    SatellitePosition,
+    WorldPayload,
 )
 from config import settings
 
@@ -52,7 +58,7 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-def _build_geojson(aircraft_list: list) -> GeoJSONFeatureCollection:
+def _build_aircraft_geojson(aircraft_list: list[AircraftPosition]) -> GeoJSONFeatureCollection:
     features = []
     for ac in aircraft_list:
         if ac.latitude is None or ac.longitude is None:
@@ -75,22 +81,81 @@ def _build_geojson(aircraft_list: list) -> GeoJSONFeatureCollection:
     return GeoJSONFeatureCollection(features=features)
 
 
+def _build_satellite_geojson(satellites: list[SatellitePosition]) -> GeoJSONFeatureCollection:
+    features = []
+    for sat in satellites:
+        features.append(
+            GeoJSONFeature(
+                geometry=GeoJSONPoint(
+                    coordinates=[sat.longitude, sat.latitude, sat.altitude_km * 1000]
+                ),
+                properties={
+                    "norad_id": sat.norad_id,
+                    "name": sat.name,
+                    "altitude_km": sat.altitude_km,
+                    "velocity_km_s": sat.velocity_km_s,
+                },
+            )
+        )
+    return GeoJSONFeatureCollection(features=features)
+
+
+def _build_earthquake_geojson(quakes: list[EarthquakeEvent]) -> GeoJSONFeatureCollection:
+    features = []
+    for eq in quakes:
+        features.append(
+            GeoJSONFeature(
+                geometry=GeoJSONPoint(coordinates=[eq.longitude, eq.latitude]),
+                properties={
+                    "id": eq.id,
+                    "magnitude": eq.magnitude,
+                    "place": eq.place,
+                    "depth_km": eq.depth_km,
+                    "time_ms": eq.time_ms,
+                },
+            )
+        )
+    return GeoJSONFeatureCollection(features=features)
+
+
 async def broadcast_loop() -> None:
     logger.info("Broadcast loop started. Interval: %ds", settings.POLLING_INTERVAL_SECONDS)
     while True:
         cycle_start = time.monotonic()
         try:
             if manager.connection_count > 0:
-                aircraft = await fetch_aircraft()
-                geojson = _build_geojson(aircraft)
-                payload = LivePayload(
-                    geojson=geojson,
-                    aircraft_count=len(geojson.features),
+                results = await asyncio.gather(
+                    fetch_aircraft(),
+                    fetch_military_aircraft(),
+                    fetch_satellites(),
+                    fetch_earthquakes(),
+                    return_exceptions=True,
+                )
+
+                aircraft = results[0] if not isinstance(results[0], BaseException) else []
+                military = results[1] if not isinstance(results[1], BaseException) else []
+                satellites = results[2] if not isinstance(results[2], BaseException) else []
+                quakes = results[3] if not isinstance(results[3], BaseException) else []
+
+                payload = WorldPayload(
+                    aircraft=_build_aircraft_geojson(aircraft),
+                    military=_build_aircraft_geojson(military),
+                    satellites=_build_satellite_geojson(satellites),
+                    earthquakes=_build_earthquake_geojson(quakes),
+                    counts={
+                        "aircraft": len(aircraft),
+                        "military": len(military),
+                        "satellites": len(satellites),
+                        "earthquakes": len(quakes),
+                    },
                 )
                 await manager.broadcast(payload.model_dump_json())
                 logger.info(
-                    "Broadcast: %d aircraft to %d client(s)",
-                    len(geojson.features),
+                    "Broadcast: ac=%d mil=%d sat=%d eq=%d to %d client(s)",
+                    len(aircraft),
+                    len(military),
+                    len(satellites),
+                    len(quakes),
                     manager.connection_count,
                 )
             else:
@@ -105,7 +170,7 @@ async def broadcast_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(broadcast_loop())
-    logger.info("World Monitor backend started")
+    logger.info("WorldView backend started")
     yield
     task.cancel()
     try:
@@ -114,7 +179,7 @@ async def lifespan(app: FastAPI):
         logger.info("Broadcast loop stopped")
 
 
-app = FastAPI(title="World Monitor API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="WorldView API", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
