@@ -2,7 +2,6 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    MAPBOX_TOKEN: str
     OPENSKY_USERNAME: str = ""
     OPENSKY_PASSWORD: str = ""
     POLLING_INTERVAL_SECONDS: int = 10
