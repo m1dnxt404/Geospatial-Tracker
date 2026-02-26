@@ -1,4 +1,8 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings
+
+# The .env file lives at the project root (one level above this file).
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
 class Settings(BaseSettings):
@@ -10,7 +14,8 @@ class Settings(BaseSettings):
     POLLING_INTERVAL_SECONDS: int = 10
 
     class Config:
-        env_file = ".env"
+        env_file = str(_ENV_FILE)
+        extra = "ignore"
 
 
 settings = Settings()

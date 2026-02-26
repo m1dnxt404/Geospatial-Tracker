@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import logging
 import time
@@ -9,10 +10,27 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 OPENSKY_URL = "https://opensky-network.org/api/states/all"
+
+# Short-lived cache so concurrent calls within the same broadcast cycle
+# (aircraft layer + military ICAO fallback) share one HTTP request instead of two.
+_aircraft_cache: list[AircraftPosition] = []
+_aircraft_cache_time: float = 0.0
+_aircraft_lock: asyncio.Lock | None = None
+AIRCRAFT_CACHE_TTL = 12.0  # seconds — just over one broadcast cycle
+
+
 OPENSKY_TOKEN_URL = (
     "https://auth.opensky-network.org/auth/realms/opensky-network"
     "/protocol/openid-connect/token"
 )
+
+
+def _get_lock() -> asyncio.Lock:
+    """Return the module-level lock, creating it lazily inside the event loop."""
+    global _aircraft_lock
+    if _aircraft_lock is None:
+        _aircraft_lock = asyncio.Lock()
+    return _aircraft_lock
 
 # OpenSky state vector field indices (documented at opensky-network.org/apidoc)
 _IDX_ICAO24 = 0
@@ -95,40 +113,60 @@ async def fetch_aircraft() -> list[AircraftPosition]:
       2. Basic auth                 (OPENSKY_USERNAME + OPENSKY_PASSWORD)
       3. Anonymous                  (no credentials — heavily rate-limited)
 
+    Concurrent calls within the same broadcast cycle (e.g. aircraft layer +
+    military ICAO fallback) share one HTTP request via a short-lived cache.
+
     Returns an empty list on any network failure — never raises.
     """
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            if settings.OPENSKY_CLIENT_ID and settings.OPENSKY_CLIENT_SECRET:
-                token = await _get_bearer_token()
-                response = await client.get(
-                    OPENSKY_URL,
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-            elif settings.OPENSKY_USERNAME and settings.OPENSKY_PASSWORD:
-                response = await client.get(
-                    OPENSKY_URL,
-                    auth=(settings.OPENSKY_USERNAME, settings.OPENSKY_PASSWORD),
-                )
-            else:
-                response = await client.get(OPENSKY_URL)
+    global _aircraft_cache, _aircraft_cache_time
 
-            response.raise_for_status()
-            data = response.json()
+    # Fast path — serve from cache without acquiring the lock.
+    now = time.monotonic()
+    if _aircraft_cache and (now - _aircraft_cache_time) < AIRCRAFT_CACHE_TTL:
+        logger.debug("fetch_aircraft: cache hit (%d aircraft)", len(_aircraft_cache))
+        return _aircraft_cache
 
-        states = data.get("states") or []
-        aircraft = [_parse_state_vector(s) for s in states]
-        result = [a for a in aircraft if a is not None]
+    # Slow path — one coroutine fetches, the rest wait and then get the cache.
+    async with _get_lock():
+        now = time.monotonic()
+        if _aircraft_cache and (now - _aircraft_cache_time) < AIRCRAFT_CACHE_TTL:
+            logger.debug("fetch_aircraft: post-lock cache hit (%d aircraft)", len(_aircraft_cache))
+            return _aircraft_cache
 
-        logger.info("Fetched %d aircraft from OpenSky", len(result))
-        return result
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                if settings.OPENSKY_CLIENT_ID and settings.OPENSKY_CLIENT_SECRET:
+                    token = await _get_bearer_token()
+                    response = await client.get(
+                        OPENSKY_URL,
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                elif settings.OPENSKY_USERNAME and settings.OPENSKY_PASSWORD:
+                    response = await client.get(
+                        OPENSKY_URL,
+                        auth=(settings.OPENSKY_USERNAME, settings.OPENSKY_PASSWORD),
+                    )
+                else:
+                    response = await client.get(OPENSKY_URL)
 
-    except httpx.TimeoutException:
-        logger.error("OpenSky request timed out")
-        return []
-    except httpx.HTTPStatusError as exc:
-        logger.error("OpenSky HTTP %s: %s", exc.response.status_code, exc.response.text[:200])
-        return []
-    except Exception as exc:
-        logger.exception("Unexpected error fetching aircraft: %s", exc)
-        return []
+                response.raise_for_status()
+                data = response.json()
+
+            states = data.get("states") or []
+            aircraft = [_parse_state_vector(s) for s in states]
+            result = [a for a in aircraft if a is not None]
+
+            _aircraft_cache = result
+            _aircraft_cache_time = time.monotonic()
+            logger.info("Fetched %d aircraft from OpenSky", len(result))
+            return result
+
+        except httpx.TimeoutException:
+            logger.error("OpenSky request timed out")
+            return _aircraft_cache  # return stale data rather than empty list
+        except httpx.HTTPStatusError as exc:
+            logger.error("OpenSky HTTP %s: %s", exc.response.status_code, exc.response.text[:200])
+            return _aircraft_cache
+        except Exception as exc:
+            logger.exception("Unexpected error fetching aircraft: %s", exc)
+            return _aircraft_cache
