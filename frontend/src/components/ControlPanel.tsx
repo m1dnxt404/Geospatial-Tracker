@@ -75,7 +75,7 @@ export function ControlPanel({
     <div style={styles.panel}>
       {/* Header */}
       <div style={styles.header}>
-        <span style={styles.headerTitle}>WORLDVIEW</span>
+        <span style={styles.headerTitle}>ORBITALVIEW</span>
         <span style={styles.headerSub}>GEOSPATIAL MONITOR</span>
       </div>
 

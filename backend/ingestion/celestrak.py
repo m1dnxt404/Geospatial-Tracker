@@ -51,7 +51,7 @@ async def fetch_tles() -> list[TLERecord]:
                 try:
                     resp = await client.get(
                         CELESTRAK_URL,
-                        headers={"User-Agent": "WorldView-Tracker/2.0 (geospatial research)"},
+                        headers={"User-Agent": "OrbitalView-Tracker/2.0 (geospatial research)"},
                     )
                     resp.raise_for_status()
                     _tle_cache = _parse_tle_text(resp.text)

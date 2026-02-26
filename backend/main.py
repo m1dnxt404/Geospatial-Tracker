@@ -150,7 +150,7 @@ async def broadcast_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(broadcast_loop())
-    logger.info("WorldView backend started")
+    logger.info("OrbitalView backend started")
     yield
     task.cancel()
     try:
@@ -159,7 +159,7 @@ async def lifespan(app: FastAPI):
         logger.info("Broadcast loop stopped")
 
 
-app = FastAPI(title="WorldView API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="OrbitalView API", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

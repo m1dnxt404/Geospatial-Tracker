@@ -1,4 +1,4 @@
-# WorldView — Real-Time 3D Geospatial Surveillance Platform
+# OrbitalView — Real-Time 3D Geospatial Surveillance Platform
 
 A live 3D geospatial tracker that displays **aircraft, military flights, satellites, earthquakes, and weather overlays** on a rotating globe in real time. Built with FastAPI (WebSocket backend) and React + CesiumJS (3D frontend). Includes CRT, Night Vision, and FLIR thermal visual modes.
 
