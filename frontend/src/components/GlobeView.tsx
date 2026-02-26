@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import * as Cesium from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import * as satellite from "satellite.js";
-import type { WorldPayload, LayerVisibility, VisualMode } from "../types";
+import type { WorldPayload, LayerVisibility, VisualMode, WeatherLayerKey, WeatherLayers } from "../types";
 
 interface GlobeViewProps {
   payload: WorldPayload | null;
   layers: LayerVisibility;
   visualMode: VisualMode;
+  weatherLayers: WeatherLayers;
   onViewerReady?: (viewer: Cesium.Viewer) => void;
 }
 
@@ -233,7 +234,7 @@ const SATELLITE_ICON = createSatelliteIcon();
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function GlobeView({ payload, layers, visualMode, onViewerReady }: GlobeViewProps) {
+export default function GlobeView({ payload, layers, visualMode, weatherLayers, onViewerReady }: GlobeViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
   const handlerRef = useRef<Cesium.ScreenSpaceEventHandler | null>(null);
@@ -246,6 +247,7 @@ export default function GlobeView({ payload, layers, visualMode, onViewerReady }
   const crtStageRef = useRef<Cesium.PostProcessStage | null>(null);
   const nvStageRef = useRef<Cesium.PostProcessStage | null>(null);
   const flirStageRef = useRef<Cesium.PostProcessStage | null>(null);
+  const weatherLayerRefsRef = useRef<Partial<Record<WeatherLayerKey, Cesium.ImageryLayer>>>({});
 
   const [selectedInfo, setSelectedInfo] = useState<SelectedInfo | null>(null);
 
@@ -277,6 +279,32 @@ export default function GlobeView({ payload, layers, visualMode, onViewerReady }
         maximumLevel: 19,
       })
     );
+
+    // ── Weather overlays — OpenWeatherMap tile layers (hidden until toggled) ──
+    const OWM_KEY = import.meta.env.VITE_OWM_API_KEY ?? "";
+    const OWM_LAYER_NAMES: Record<WeatherLayerKey, string> = {
+      clouds:   "clouds_new",
+      rain:     "precipitation_new",
+      wind:     "wind_new",
+      temp:     "temp_new",
+      pressure: "pressure_new",
+    };
+    if (OWM_KEY) {
+      const weatherRefs: Partial<Record<WeatherLayerKey, Cesium.ImageryLayer>> = {};
+      for (const [key, owmName] of Object.entries(OWM_LAYER_NAMES) as [WeatherLayerKey, string][]) {
+        const layer = viewer.imageryLayers.addImageryProvider(
+          new Cesium.UrlTemplateImageryProvider({
+            url: `https://tile.openweathermap.org/map/${owmName}/{z}/{x}/{y}.png?appid=${OWM_KEY}`,
+            credit: "Weather © OpenWeatherMap",
+            maximumLevel: 6,
+          })
+        );
+        layer.show  = false;
+        layer.alpha = 0.7;
+        weatherRefs[key] = layer;
+      }
+      weatherLayerRefsRef.current = weatherRefs;
+    }
 
     // ── Lighting — sun-based day/night terminator ────────────────────────────
     viewer.scene.globe.enableLighting = true;
@@ -397,6 +425,7 @@ export default function GlobeView({ payload, layers, visualMode, onViewerReady }
       crtStageRef.current = null;
       nvStageRef.current = null;
       flirStageRef.current = null;
+      weatherLayerRefsRef.current = {};
       if (!viewer.isDestroyed()) {
         viewer.destroy();
       }
@@ -560,6 +589,14 @@ export default function GlobeView({ payload, layers, visualMode, onViewerReady }
     nvStageRef.current.enabled = visualMode === "nightvision";
     flirStageRef.current.enabled = visualMode === "flir";
   }, [visualMode]);
+
+  // ── Weather layer visibility ───────────────────────────────────────────────
+  useEffect(() => {
+    const refs = weatherLayerRefsRef.current;
+    (Object.keys(weatherLayers) as WeatherLayerKey[]).forEach((key) => {
+      if (refs[key]) refs[key]!.show = weatherLayers[key];
+    });
+  }, [weatherLayers]);
 
   return (
     <div style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>

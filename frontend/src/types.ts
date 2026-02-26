@@ -64,3 +64,13 @@ export interface LayerVisibility {
 export type VisualMode = "normal" | "crt" | "nightvision" | "flir";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
+
+export type WeatherLayerKey = "clouds" | "rain" | "wind" | "temp" | "pressure";
+
+export interface WeatherLayers {
+  clouds:   boolean;
+  rain:     boolean;
+  wind:     boolean;
+  temp:     boolean;
+  pressure: boolean;
+}

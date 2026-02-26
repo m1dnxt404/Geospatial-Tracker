@@ -1,8 +1,8 @@
 # WorldView — Real-Time 3D Geospatial Surveillance Platform
 
-A live 3D geospatial tracker that displays **aircraft, military flights, satellites, and earthquakes** on a rotating globe in real time. Built with FastAPI (WebSocket backend) and React + CesiumJS (3D frontend). Includes CRT, Night Vision, and FLIR thermal visual modes.
+A live 3D geospatial tracker that displays **aircraft, military flights, satellites, earthquakes, and weather overlays** on a rotating globe in real time. Built with FastAPI (WebSocket backend) and React + CesiumJS (3D frontend). Includes CRT, Night Vision, and FLIR thermal visual modes.
 
-**Running cost: $0.** A free OpenSky account is recommended for reliable aircraft data (anonymous access is heavily rate-limited). All other sources require no registration.
+**Running cost: $0.** A free OpenSky account is recommended for reliable aircraft data (anonymous access is heavily rate-limited). Weather overlays require a free OpenWeatherMap API key. All other sources need no registration.
 
 ---
 
@@ -23,15 +23,17 @@ CelesTrak TLE   OpenSky   ADS-B Exchange   USGS Earthquakes
       │  WebSocket /ws/live
       ▼
 React Frontend
-  GlobeView.tsx  (CesiumJS 3D globe, CartoDB dark tiles)
+  GlobeView.tsx  (CesiumJS 3D globe, ESRI World Imagery, sun lighting)
   ├── Aircraft layer   — white/cyan dots coloured by altitude
   ├── Military layer   — red dots (ADS-B Exchange or ICAO filter)
-  ├── Satellite layer  — cyan dots + 30-min orbital trail, animated in real time
+  ├── Satellite layer  — billboard icon + name label + 30-min orbital trail
   │     satellite.js runs SGP4 on the client; Cesium SampledPositionProperty
   │     interpolates smooth motion between samples
   ├── Earthquake layer — orange/red dots sized by magnitude
+  ├── Weather overlays — OpenWeatherMap tile layers (clouds/rain/wind/temp/pressure)
+  │     Cesium ImageryLayer per type; toggled independently; no backend required
   └── PostProcessStage — CRT / Night Vision / FLIR shaders
-  ControlPanel.tsx — layer toggles + visual mode buttons
+  ControlPanel.tsx — layer toggles + visual mode + weather toggles
   CameraPresets.tsx — one-click flyTo for 8 world cities
 ```
 
@@ -45,6 +47,7 @@ React Frontend
 | Military | ADS-B Exchange | `/v2/mil/` (fallback: ICAO prefix filter) | Free | 10 s |
 | Satellites | CelesTrak | `celestrak.org/pub/TLE/active.txt` | Free | TLE cache 30 min |
 | Earthquakes | USGS FDSNWS | `/fdsnws/event/1/query?minmagnitude=2.5` | Free | 60 s |
+| Weather | OpenWeatherMap | `tile.openweathermap.org/map/{layer}/{z}/{x}/{y}.png` | Free (API key) | Browser tile cache |
 
 ---
 
@@ -76,6 +79,10 @@ OPENSKY_CLIENT_SECRET=your_client_secret
 
 # Military aircraft via ADS-B Exchange (falls back to ICAO prefix filter without this)
 ADSB_API_KEY=your_adsb_exchange_key
+
+# OpenWeatherMap API key — enables weather tile overlays on the globe
+# Register for free at https://openweathermap.org/api
+VITE_OWM_API_KEY=your_owm_key
 ```
 
 ### 2. Run locally (without Docker)
@@ -137,6 +144,18 @@ Click the coloured button beside each layer name to toggle it on or off.
 | **NV** | Night Vision — green monochrome with film grain |
 | **FLIR** | Thermal palette — black → purple → red → yellow → white |
 
+### Weather Overlays (left panel)
+
+Requires `VITE_OWM_API_KEY` set in `.env`. Multiple overlays can be active simultaneously.
+
+| Overlay | Description |
+| --- | --- |
+| **Clouds** | Cloud cover (opacity-based) |
+| **Rain** | Precipitation intensity |
+| **Wind** | Wind speed and direction |
+| **Temp** | Surface temperature gradient |
+| **Pressure** | Atmospheric pressure contours |
+
 ### Camera Presets (bottom bar)
 
 Click any city to instantly fly the camera there:
@@ -169,8 +188,8 @@ Geospatial Tracker/
 │   │   ├── hooks/
 │   │   │   └── useWebSocket.ts  # WS hook with exponential backoff reconnect
 │   │   └── components/
-│   │       ├── GlobeView.tsx    # CesiumJS 3D globe + 4 data layers + GLSL shaders
-│   │       ├── ControlPanel.tsx # Layer toggles + visual mode selector
+│   │       ├── GlobeView.tsx    # CesiumJS 3D globe + 4 data layers + weather imagery + GLSL shaders
+│   │       ├── ControlPanel.tsx # Layer toggles + visual mode + weather toggles
 │   │       └── CameraPresets.tsx# 8-city flyTo shortcuts
 │   ├── vite.config.ts           # Vite + vite-plugin-cesium
 │   ├── Dockerfile
@@ -194,6 +213,7 @@ Geospatial Tracker/
 | `ADSB_API_KEY` | No | — | ADS-B Exchange key; falls back to ICAO filter without it |
 | `POLLING_INTERVAL_SECONDS` | No | `10` | How often to fetch all data sources |
 | `VITE_WS_URL` | No | `ws://localhost:8000/ws/live` | WebSocket URL override (frontend) |
+| `VITE_OWM_API_KEY` | No | — | OpenWeatherMap API key; enables weather tile overlays (free tier) |
 
 ---
 
@@ -257,6 +277,10 @@ TLE data is cached for **30 minutes** per fetch to respect CelesTrak's free tier
 
 Earthquake data is cached for **60 seconds**. The USGS endpoint is free with no authentication.
 
+### OpenWeatherMap
+
+Weather tile requests are made directly by the browser (no backend involvement). The free tier allows up to **1,000,000 tile calls/month** — far more than any single user will generate. Tiles are cached by the browser; no server-side caching is needed. Without `VITE_OWM_API_KEY` set, the weather toggle buttons are still shown but no tile requests are made.
+
 ---
 
 ## Extending the Project
@@ -265,5 +289,5 @@ See [Enhancements.md](Enhancements.md) for the full roadmap. Quick wins:
 
 - **Faster updates** — lower `POLLING_INTERVAL_SECONDS` in `.env` (respect rate limits above)
 - **More satellites** — raise `MAX_SATELLITES` in [backend/ingestion/celestrak.py](backend/ingestion/celestrak.py) (currently 500; raising it increases frontend SGP4 compute time on TLE refresh)
-- **Different basemap** — swap the CartoDB URL in [frontend/src/components/GlobeView.tsx](frontend/src/components/GlobeView.tsx) for any `{z}/{x}/{y}` tile server
+- **Different basemap** — swap the ESRI URL in [frontend/src/components/GlobeView.tsx](frontend/src/components/GlobeView.tsx) for any `{z}/{x}/{y}` tile server
 - **Aircraft trails** — store position history per `icao24` and draw `Polyline` primitives in GlobeView

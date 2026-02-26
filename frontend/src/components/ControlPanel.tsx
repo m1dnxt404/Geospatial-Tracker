@@ -1,5 +1,5 @@
 import React from "react";
-import type { LayerVisibility, VisualMode, ConnectionStatus } from "../types";
+import type { LayerVisibility, VisualMode, ConnectionStatus, WeatherLayerKey, WeatherLayers } from "../types";
 
 interface ControlPanelProps {
   counts: {
@@ -14,6 +14,8 @@ interface ControlPanelProps {
   onLayerToggle: (layer: keyof LayerVisibility) => void;
   visualMode: VisualMode;
   onVisualModeChange: (mode: VisualMode) => void;
+  weatherLayers: WeatherLayers;
+  onWeatherToggle: (layer: WeatherLayerKey) => void;
 }
 
 const LAYER_CONFIG: Array<{
@@ -26,6 +28,19 @@ const LAYER_CONFIG: Array<{
   { key: "military", label: "Military", icon: "⬟", color: "#FF4444" },
   { key: "satellites", label: "Satellites", icon: "◎", color: "#00FFFF" },
   { key: "earthquakes", label: "Earthquakes", icon: "⬡", color: "#FF8C00" },
+];
+
+const WEATHER_CONFIG: Array<{
+  key: WeatherLayerKey;
+  label: string;
+  icon: string;
+  color: string;
+}> = [
+  { key: "clouds",   label: "Clouds",   icon: "☁", color: "#94A3B8" },
+  { key: "rain",     label: "Rain",     icon: "⛆", color: "#38BDF8" },
+  { key: "wind",     label: "Wind",     icon: "~", color: "#A78BFA" },
+  { key: "temp",     label: "Temp",     icon: "▲", color: "#FB923C" },
+  { key: "pressure", label: "Pressure", icon: "◉", color: "#34D399" },
 ];
 
 const VISUAL_MODES: Array<{ mode: VisualMode; label: string }> = [
@@ -50,6 +65,8 @@ export function ControlPanel({
   onLayerToggle,
   visualMode,
   onVisualModeChange,
+  weatherLayers,
+  onWeatherToggle,
 }: ControlPanelProps): React.ReactElement {
   const totalTracked =
     counts.aircraft + counts.military + counts.satellites + counts.earthquakes;
@@ -116,6 +133,32 @@ export function ControlPanel({
           </button>
         ))}
       </div>
+
+      <div style={styles.divider} />
+
+      {/* Weather overlays */}
+      <div style={styles.sectionLabel}>WEATHER</div>
+      {WEATHER_CONFIG.map(({ key, label, icon, color }) => (
+        <div key={key} style={styles.layerRow}>
+          <button
+            style={{
+              ...styles.toggleBtn,
+              backgroundColor: weatherLayers[key] ? color + "22" : "transparent",
+              borderColor: weatherLayers[key] ? color : "#334155",
+            }}
+            onClick={() => onWeatherToggle(key)}
+            aria-pressed={weatherLayers[key]}
+            aria-label={`Toggle ${label} weather layer`}
+          >
+            <span style={{ color: weatherLayers[key] ? color : "#64748B", fontSize: 13 }}>
+              {icon}
+            </span>
+          </button>
+          <span style={{ ...styles.layerLabel, color: weatherLayers[key] ? "#E2E8F0" : "#64748B" }}>
+            {label}
+          </span>
+        </div>
+      ))}
 
       <div style={styles.divider} />
 
