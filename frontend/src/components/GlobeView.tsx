@@ -199,6 +199,38 @@ const panelStyles: Record<string, React.CSSProperties> = {
   },
 };
 
+// ── Satellite icon ─────────────────────────────────────────────────────────────
+
+function createSatelliteIcon(color = "#00FFFF", size = 24): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const cx = size / 2;
+  const cy = size / 2;
+
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+
+  // Body
+  ctx.fillRect(cx - 3.5, cy - 2.5, 7, 5);
+
+  // Solar panels — left and right
+  ctx.fillRect(cx - 3.5 - 8, cy - 1.5, 7, 3);
+  ctx.fillRect(cx + 3.5 + 1,  cy - 1.5, 7, 3);
+
+  // Antenna
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 2.5);
+  ctx.lineTo(cx, cy - 6.5);
+  ctx.stroke();
+
+  return canvas.toDataURL();
+}
+
+const SATELLITE_ICON = createSatelliteIcon();
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function GlobeView({ payload, layers, visualMode, onViewerReady }: GlobeViewProps) {
@@ -236,21 +268,38 @@ export default function GlobeView({ payload, layers, visualMode, onViewerReady }
 
     viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
 
+    // ── Imagery — ESRI World Imagery (free, no API key) ─────────────────────
     viewer.imageryLayers.removeAll();
     viewer.imageryLayers.addImageryProvider(
       new Cesium.UrlTemplateImageryProvider({
-        url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-        subdomains: ["a", "b", "c", "d"],
+        url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        credit: "Tiles © Esri — Source: Esri, USGS, NOAA",
         maximumLevel: 19,
-        credit: "© CartoDB © OpenStreetMap contributors",
       })
     );
 
+    // ── Lighting — sun-based day/night terminator ────────────────────────────
+    viewer.scene.globe.enableLighting = true;
+    viewer.scene.globe.atmosphereLightIntensity  = 5.0;
+    viewer.scene.globe.atmosphereHueShift        = 0.0;
+    viewer.scene.globe.atmosphereSaturationShift = 0.1;
+    viewer.scene.globe.atmosphereBrightnessShift = 0.1;
+
+    // ── Atmosphere — richer sky glow ─────────────────────────────────────────
     if (viewer.scene.skyAtmosphere) {
       viewer.scene.skyAtmosphere.show = true;
+      viewer.scene.skyAtmosphere.atmosphereLightIntensity = 15.0;
+      viewer.scene.skyAtmosphere.atmosphereRayleighCoefficient =
+        new Cesium.Cartesian3(5.5e-6, 13.0e-6, 28.4e-6);
     }
-    viewer.scene.globe.enableLighting = false;
-    viewer.scene.globe.atmosphereLightIntensity = 10.0;
+
+    // ── Fog — depth perception ───────────────────────────────────────────────
+    viewer.scene.fog.enabled               = true;
+    viewer.scene.fog.density               = 0.0002;
+    viewer.scene.fog.screenSpaceErrorFactor = 4.0;
+
+    // ── High-DPI ─────────────────────────────────────────────────────────────
+    viewer.resolutionScale = window.devicePixelRatio;
 
     try {
       (viewer.cesiumWidget.creditContainer as HTMLElement).style.display = "none";
@@ -439,20 +488,35 @@ export default function GlobeView({ payload, layers, visualMode, onViewerReady }
 
       sat.entities.add({
         position: positionProp,
-        point: new Cesium.PointGraphics({
-          pixelSize: 5,
-          color: Cesium.Color.fromCssColorString("#00FFFF").withAlpha(0.9),
+        billboard: new Cesium.BillboardGraphics({
+          image: SATELLITE_ICON,
+          width:  20,
+          height: 20,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          scaleByDistance:        new Cesium.NearFarScalar(5e5, 1.4, 1.5e7, 0.5),
+          translucencyByDistance: new Cesium.NearFarScalar(1e6, 1.0, 2e8,  0.5),
+        }),
+        label: new Cesium.LabelGraphics({
+          text: tle.name,
+          font: "11px 'Courier New', Courier, monospace",
+          fillColor:    Cesium.Color.fromCssColorString("#00FFFF"),
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 2,
+          style:       Cesium.LabelStyle.FILL_AND_OUTLINE,
+          pixelOffset: new Cesium.Cartesian2(0, -18),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          scaleByDistance:        new Cesium.NearFarScalar(5e5, 0.9, 5e6, 0.0),
+          translucencyByDistance: new Cesium.NearFarScalar(5e5, 1.0, 5e6, 0.0),
         }),
         path: new Cesium.PathGraphics({
-          resolution: 120,
+          resolution: 60,
           material: new Cesium.PolylineGlowMaterialProperty({
-            glowPower: 0.1,
-            color: Cesium.Color.fromCssColorString("#00FFFF").withAlpha(0.35),
+            glowPower: 0.3,
+            color: Cesium.Color.fromCssColorString("#00FFFF").withAlpha(0.6),
           }),
-          width: 1,
-          leadTime: new Cesium.ConstantProperty(0),
-          trailTime: new Cesium.ConstantProperty(1800), // 30-minute trail
+          width:     2,
+          leadTime:  new Cesium.ConstantProperty(0),
+          trailTime: new Cesium.ConstantProperty(1800),
         }),
         // Store SelectedInfo on the entity so the click handler can read it
         properties: new Cesium.PropertyBag({

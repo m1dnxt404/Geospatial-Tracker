@@ -15,10 +15,10 @@ CelesTrak TLE   OpenSky   ADS-B Exchange   USGS Earthquakes
                        FastAPI Backend                      │
            ingestion/opensky.py      — civil aircraft       │
            ingestion/adsb_exchange.py — military aircraft   │
-           ingestion/celestrak.py   — satellite positions   │
+           ingestion/celestrak.py   — TLE records (cached)  │
            ingestion/usgs.py        — earthquake events     │
                                                             │
-           broadcast_loop() → WorldPayload (4× GeoJSON)     │
+           broadcast_loop() → WorldPayload                  │
       ┌────────────────────────────────────────────────────┘
       │  WebSocket /ws/live
       ▼
@@ -26,7 +26,9 @@ React Frontend
   GlobeView.tsx  (CesiumJS 3D globe, CartoDB dark tiles)
   ├── Aircraft layer   — white/cyan dots coloured by altitude
   ├── Military layer   — red dots (ADS-B Exchange or ICAO filter)
-  ├── Satellite layer  — cyan dots at real orbital altitude
+  ├── Satellite layer  — cyan dots + 30-min orbital trail, animated in real time
+  │     satellite.js runs SGP4 on the client; Cesium SampledPositionProperty
+  │     interpolates smooth motion between samples
   ├── Earthquake layer — orange/red dots sized by magnitude
   └── PostProcessStage — CRT / Night Vision / FLIR shaders
   ControlPanel.tsx — layer toggles + visual mode buttons
@@ -41,7 +43,7 @@ React Frontend
 | --- | --- | --- | --- | --- |
 | Aircraft | OpenSky Network | `/api/states/all` | Free | 10 s |
 | Military | ADS-B Exchange | `/v2/mil/` (fallback: ICAO prefix filter) | Free | 10 s |
-| Satellites | CelesTrak + sgp4 | `celestrak.org/pub/TLE/active.txt` | Free | TLE 30 min, positions live |
+| Satellites | CelesTrak | `celestrak.org/pub/TLE/active.txt` | Free | TLE cache 30 min |
 | Earthquakes | USGS FDSNWS | `/fdsnws/event/1/query?minmagnitude=2.5` | Free | 60 s |
 
 ---
@@ -121,7 +123,7 @@ docker compose up --build
 | --- | --- | --- |
 | Aircraft | White → Cyan | Civil flights; cyan = high altitude (> 9,000 m) |
 | Military | Red | Military aircraft via ADS-B Exchange or ICAO prefix fallback |
-| Satellites | Cyan | Up to 2,000 active satellites at real orbital altitude |
+| Satellites | Cyan | Up to 500 active satellites, animated in real time with a 30-minute orbital trail |
 | Earthquakes | Orange → Red | M2.5+ events sized by magnitude |
 
 Click the coloured button beside each layer name to toggle it on or off.
@@ -154,7 +156,7 @@ Geospatial Tracker/
 │   ├── ingestion/
 │   │   ├── opensky.py           # OpenSky Network — civil aircraft (global)
 │   │   ├── adsb_exchange.py     # ADS-B Exchange — military aircraft
-│   │   ├── celestrak.py         # CelesTrak TLE + sgp4 — satellite positions
+│   │   ├── celestrak.py         # CelesTrak — raw TLE records (no server-side SGP4)
 │   │   └── usgs.py              # USGS FDSNWS — earthquake events
 │   ├── models/
 │   │   └── schemas.py           # Pydantic v2 models (WorldPayload + all layers)
@@ -162,7 +164,7 @@ Geospatial Tracker/
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx              # Root — wires layers, visualMode, viewer ref
-│   │   ├── types.ts             # TypeScript interfaces (WorldPayload, all layers)
+│   │   ├── types.ts             # TypeScript interfaces (WorldPayload, TLERecord, etc.)
 │   │   ├── vite-env.d.ts        # Vite client type reference
 │   │   ├── hooks/
 │   │   │   └── useWebSocket.ts  # WS hook with exponential backoff reconnect
@@ -217,19 +219,22 @@ pytest tests/ -v
 {
   "aircraft":   { "type": "FeatureCollection", "features": [...] },
   "military":   { "type": "FeatureCollection", "features": [...] },
-  "satellites": { "type": "FeatureCollection", "features": [...] },
+  "tles": [
+    { "norad_id": "25544", "name": "ISS (ZARYA)", "line1": "1 25544U ...", "line2": "2 25544 ..." },
+    ...
+  ],
   "earthquakes":{ "type": "FeatureCollection", "features": [...] },
   "counts": {
     "aircraft": 8241,
     "military": 87,
-    "satellites": 1923,
+    "satellites": 500,
     "earthquakes": 47
   },
   "timestamp": 1700000000.0
 }
 ```
 
-Satellite coordinates include altitude as the third element: `[lon, lat, altMeters]`.
+Satellite data is sent as raw TLE strings. The frontend uses [satellite.js](https://github.com/shashwatak/satellite-js) to run SGP4 propagation in the browser, producing a `SampledPositionProperty` per satellite that Cesium animates in real time.
 
 ---
 
@@ -246,7 +251,7 @@ At 10 s polling, anonymous access far exceeds the daily credit limit — aircraf
 
 ### CelesTrak
 
-TLE data is cached for **30 minutes** per fetch to respect CelesTrak's free tier. Satellite positions are re-computed from cached TLEs on every broadcast cycle.
+TLE data is cached for **30 minutes** per fetch to respect CelesTrak's free tier. The raw TLE strings are forwarded to connected clients, which run SGP4 locally. The cache is reused across broadcast cycles and survives transient network failures.
 
 ### USGS Earthquakes
 
@@ -259,6 +264,6 @@ Earthquake data is cached for **60 seconds**. The USGS endpoint is free with no 
 See [Enhancements.md](Enhancements.md) for the full roadmap. Quick wins:
 
 - **Faster updates** — lower `POLLING_INTERVAL_SECONDS` in `.env` (respect rate limits above)
-- **More satellites** — raise `MAX_SATELLITES` in [backend/ingestion/celestrak.py](backend/ingestion/celestrak.py)
+- **More satellites** — raise `MAX_SATELLITES` in [backend/ingestion/celestrak.py](backend/ingestion/celestrak.py) (currently 500; raising it increases frontend SGP4 compute time on TLE refresh)
 - **Different basemap** — swap the CartoDB URL in [frontend/src/components/GlobeView.tsx](frontend/src/components/GlobeView.tsx) for any `{z}/{x}/{y}` tile server
 - **Aircraft trails** — store position history per `icao24` and draw `Polyline` primitives in GlobeView
