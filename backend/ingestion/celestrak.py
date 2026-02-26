@@ -1,17 +1,19 @@
+import asyncio
 import httpx
 import logging
 import time
-from math import degrees
 
-from sgp4.api import Satrec, jday
-
-from models.schemas import SatellitePosition
+from models.schemas import TLERecord
 
 logger = logging.getLogger(__name__)
 
 CELESTRAK_URL = "https://celestrak.org/pub/TLE/active.txt"
-MAX_SATELLITES = 2000
+MAX_SATELLITES = 500
 CACHE_TTL_SECONDS = 1800  # 30 minutes
+
+_TIMEOUT = httpx.Timeout(connect=45.0, read=60.0, write=5.0, pool=5.0)
+_MAX_RETRIES = 3
+_RETRY_BACKOFF = 3.0  # seconds; multiplied by attempt number
 
 _tle_cache: list[tuple[str, str, str]] = []   # (name, line1, line2)
 _cache_time: float = 0.0
@@ -34,75 +36,49 @@ def _parse_tle_text(text: str) -> list[tuple[str, str, str]]:
     return entries
 
 
-def _compute_position(name: str, line1: str, line2: str) -> SatellitePosition | None:
-    """Propagate a TLE to the current time and return geodetic position."""
-    try:
-        sat = Satrec.twoline2rv(line1, line2)
-        norad_id = line1[2:7].strip()
+async def fetch_tles() -> list[TLERecord]:
+    """Fetch TLE data from CelesTrak (cached 30 min) and return raw TLE records.
 
-        now = time.gmtime()
-        jd, fr = jday(now.tm_year, now.tm_mon, now.tm_mday,
-                      now.tm_hour, now.tm_min, now.tm_sec)
-
-        e, r, v = sat.sgp4(jd, fr)
-        if e != 0 or r is None:
-            return None
-
-        # Convert ECI (km) to geodetic manually (simplified spherical Earth)
-        x, y, z = r
-        vx, vy, vz = v
-
-        lon = degrees(float.__truediv__(__import__('math').atan2(y, x), 1))
-        lat = degrees(__import__('math').atan2(z, (x**2 + y**2) ** 0.5))
-        alt_km = (x**2 + y**2 + z**2) ** 0.5 - 6371.0
-        vel = (vx**2 + vy**2 + vz**2) ** 0.5
-
-        if alt_km < 0 or alt_km > 100_000:
-            return None
-
-        import math
-        lon_deg = math.degrees(math.atan2(y, x))
-        lat_deg = math.degrees(math.atan2(z, math.sqrt(x**2 + y**2)))
-
-        return SatellitePosition(
-            norad_id=norad_id,
-            name=name,
-            longitude=round(lon_deg, 4),
-            latitude=round(lat_deg, 4),
-            altitude_km=round(alt_km, 1),
-            velocity_km_s=round(vel, 3),
-        )
-    except Exception as exc:
-        logger.debug("Skipping satellite %s: %s", name, exc)
-        return None
-
-
-async def fetch_satellites() -> list[SatellitePosition]:
-    """Fetch TLE data from CelesTrak (cached 30 min) and compute current positions.
-
+    SGP4 propagation is handled on the frontend via satellite.js.
     Returns an empty list on failure — never raises.
     """
     global _tle_cache, _cache_time
 
     now = time.monotonic()
     if not _tle_cache or (now - _cache_time) > CACHE_TTL_SECONDS:
-        try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                resp = await client.get(
-                    CELESTRAK_URL,
-                    headers={"User-Agent": "WorldView-Tracker/2.0 (geospatial research)"},
-                )
-                resp.raise_for_status()
-                _tle_cache = _parse_tle_text(resp.text)
-                _cache_time = now
-                logger.info("Refreshed TLE cache: %d satellites", len(_tle_cache))
-        except Exception as exc:
-            logger.error("CelesTrak fetch failed: %s", exc)
-            if not _tle_cache:
-                return []
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            for attempt in range(1, _MAX_RETRIES + 1):
+                try:
+                    resp = await client.get(
+                        CELESTRAK_URL,
+                        headers={"User-Agent": "WorldView-Tracker/2.0 (geospatial research)"},
+                    )
+                    resp.raise_for_status()
+                    _tle_cache = _parse_tle_text(resp.text)
+                    _cache_time = now
+                    logger.info("Refreshed TLE cache: %d entries", len(_tle_cache))
+                    break
+                except (httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
+                    if attempt < _MAX_RETRIES:
+                        delay = _RETRY_BACKOFF * attempt
+                        logger.warning(
+                            "CelesTrak timeout (attempt %d/%d), retrying in %.0fs: %s",
+                            attempt, _MAX_RETRIES, delay, exc,
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.exception("CelesTrak fetch failed after %d attempts", _MAX_RETRIES)
+                        if not _tle_cache:
+                            return []
+                except Exception as exc:
+                    logger.exception("CelesTrak fetch failed: %s", exc)
+                    if not _tle_cache:
+                        return []
+                    break
 
-    entries = _tle_cache[:MAX_SATELLITES]
-    positions = [_compute_position(name, l1, l2) for name, l1, l2 in entries]
-    result = [p for p in positions if p is not None]
-    logger.info("Computed %d satellite positions", len(result))
+    result = [
+        TLERecord(norad_id=l1[2:7].strip(), name=name, line1=l1, line2=l2)
+        for name, l1, l2 in _tle_cache[:MAX_SATELLITES]
+    ]
+    logger.info("Returning %d TLE records", len(result))
     return result

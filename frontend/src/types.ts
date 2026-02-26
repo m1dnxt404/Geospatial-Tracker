@@ -14,11 +14,11 @@ export interface AircraftProperties {
   on_ground: boolean;
 }
 
-export interface SatelliteProperties {
+export interface TLERecord {
   norad_id: string;
   name: string;
-  altitude_km: number;
-  velocity_km_s: number;
+  line1: string;
+  line2: string;
 }
 
 export interface EarthquakeProperties {
@@ -43,7 +43,7 @@ export interface GeoJSONFeatureCollection {
 export interface WorldPayload {
   aircraft: GeoJSONFeatureCollection;
   military: GeoJSONFeatureCollection;
-  satellites: GeoJSONFeatureCollection;
+  tles: TLERecord[];
   earthquakes: GeoJSONFeatureCollection;
   counts: {
     aircraft: number;

@@ -8,9 +8,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "cesium": "^1.115.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
-    "cesium": "^1.115.0"
+    "satellite.js": "^6.0.2"
   },
   "devDependencies": {
     "@types/react": "^18.3.0",

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as Cesium from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
+import * as satellite from "satellite.js";
 import type { WorldPayload, LayerVisibility, VisualMode } from "../types";
 
 interface GlobeViewProps {
@@ -207,7 +208,7 @@ export default function GlobeView({ payload, layers, visualMode, onViewerReady }
 
   const aircraftColRef = useRef<Cesium.PointPrimitiveCollection | null>(null);
   const militaryColRef = useRef<Cesium.PointPrimitiveCollection | null>(null);
-  const satelliteColRef = useRef<Cesium.PointPrimitiveCollection | null>(null);
+  const satelliteDsRef = useRef<Cesium.CustomDataSource | null>(null);
   const earthquakeColRef = useRef<Cesium.PointPrimitiveCollection | null>(null);
 
   const crtStageRef = useRef<Cesium.PostProcessStage | null>(null);
@@ -264,17 +265,24 @@ export default function GlobeView({ payload, layers, visualMode, onViewerReady }
     const militaryCol = viewer.scene.primitives.add(
       new Cesium.PointPrimitiveCollection()
     ) as Cesium.PointPrimitiveCollection;
-    const satelliteCol = viewer.scene.primitives.add(
-      new Cesium.PointPrimitiveCollection()
-    ) as Cesium.PointPrimitiveCollection;
     const earthquakeCol = viewer.scene.primitives.add(
       new Cesium.PointPrimitiveCollection()
     ) as Cesium.PointPrimitiveCollection;
 
     aircraftColRef.current = aircraftCol;
     militaryColRef.current = militaryCol;
-    satelliteColRef.current = satelliteCol;
     earthquakeColRef.current = earthquakeCol;
+
+    // ── Satellite data source (entity-based for SampledPositionProperty) ──────
+    const satelliteDs = new Cesium.CustomDataSource("satellites");
+    viewer.dataSources.add(satelliteDs);
+    satelliteDsRef.current = satelliteDs;
+
+    // ── Clock — real-time animation ──────────────────────────────────────────
+    viewer.clock.currentTime = Cesium.JulianDate.fromDate(new Date());
+    viewer.clock.clockRange = Cesium.ClockRange.UNBOUNDED;
+    viewer.clock.shouldAnimate = true;
+    viewer.clock.multiplier = 1;
 
     // ── Post-process stages (disabled by default) ────────────────────────────
     const crtStage = viewer.scene.postProcessStages.add(
@@ -301,11 +309,26 @@ export default function GlobeView({ payload, layers, visualMode, onViewerReady }
     handler.setInputAction(
       (click: { position: Cesium.Cartesian2 }) => {
         const picked = viewer.scene.pick(click.position);
-        if (Cesium.defined(picked) && picked.id) {
-          setSelectedInfo(picked.id as SelectedInfo);
-        } else {
+        if (!Cesium.defined(picked)) {
           setSelectedInfo(null);
+          return;
         }
+        // Primitive pick: id is SelectedInfo directly
+        if (picked.id && !(picked.id instanceof Cesium.Entity)) {
+          setSelectedInfo(picked.id as SelectedInfo);
+          return;
+        }
+        // Entity pick (satellite): SelectedInfo stored in properties.info
+        if (picked.id instanceof Cesium.Entity && picked.id.properties) {
+          const info = picked.id.properties.getValue(
+            viewer.clock.currentTime
+          ) as { info?: SelectedInfo } | undefined;
+          if (info?.info) {
+            setSelectedInfo(info.info);
+            return;
+          }
+        }
+        setSelectedInfo(null);
       },
       Cesium.ScreenSpaceEventType.LEFT_CLICK
     );
@@ -320,7 +343,7 @@ export default function GlobeView({ payload, layers, visualMode, onViewerReady }
       viewerRef.current = null;
       aircraftColRef.current = null;
       militaryColRef.current = null;
-      satelliteColRef.current = null;
+      satelliteDsRef.current = null;
       earthquakeColRef.current = null;
       crtStageRef.current = null;
       nvStageRef.current = null;
@@ -337,7 +360,7 @@ export default function GlobeView({ payload, layers, visualMode, onViewerReady }
 
     const ac = aircraftColRef.current;
     const mil = militaryColRef.current;
-    const sat = satelliteColRef.current;
+    const sat = satelliteDsRef.current;
     const eq = earthquakeColRef.current;
     if (!ac || !mil || !sat || !eq) return;
 
@@ -378,20 +401,67 @@ export default function GlobeView({ payload, layers, visualMode, onViewerReady }
       });
     }
 
-    // Satellites — cyan dots at real orbital altitude (metres)
-    // disableDepthTestDistance prevents depth-clipping of high-altitude points
-    sat.removeAll();
-    for (const f of payload.satellites.features) {
-      const coords = f.geometry.coordinates as [number, number, number];
-      const [lon, lat, altM] = coords;
-      sat.add({
-        position: Cesium.Cartesian3.fromDegrees(lon, lat, altM ?? 400_000),
-        color: Cesium.Color.fromCssColorString("#00FFFF").withAlpha(0.9),
-        pixelSize: 5,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        id: { type: "satellite", data: f.properties } satisfies SelectedInfo,
+    // Satellites — animated entities driven by SampledPositionProperty + satellite.js SGP4
+    sat.entities.suspendEvents();
+    sat.entities.removeAll();
+
+    const nowMs = Date.now();
+    const STEP_SEC = 120;         // sample every 2 minutes
+    const HALF_WINDOW_SEC = 2700; // ±45 minutes → ~45 samples per satellite
+
+    for (const tle of payload.tles ?? []) {
+      const satrec = satellite.twoline2satrec(tle.line1, tle.line2);
+      const positionProp = new Cesium.SampledPositionProperty();
+      positionProp.setInterpolationOptions({
+        interpolationDegree: 5,
+        interpolationAlgorithm: Cesium.LagrangePolynomialApproximation,
+      });
+
+      let valid = true;
+      for (let offset = -HALF_WINDOW_SEC; offset <= HALF_WINDOW_SEC; offset += STEP_SEC) {
+        const date = new Date(nowMs + offset * 1000);
+        const pv = satellite.propagate(satrec, date);
+        if (!pv || !pv.position || typeof pv.position === "boolean") {
+          valid = false;
+          break;
+        }
+        const gmst = satellite.gstime(date);
+        const geo = satellite.eciToGeodetic(pv.position as satellite.EciVec3<number>, gmst);
+        const lon = satellite.degreesLong(geo.longitude);
+        const lat = satellite.degreesLat(geo.latitude);
+        const altM = (geo.height as number) * 1000;
+        positionProp.addSample(
+          Cesium.JulianDate.fromDate(date),
+          Cesium.Cartesian3.fromDegrees(lon, lat, altM),
+        );
+      }
+      if (!valid) continue;
+
+      sat.entities.add({
+        position: positionProp,
+        point: new Cesium.PointGraphics({
+          pixelSize: 5,
+          color: Cesium.Color.fromCssColorString("#00FFFF").withAlpha(0.9),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        }),
+        path: new Cesium.PathGraphics({
+          resolution: 120,
+          material: new Cesium.PolylineGlowMaterialProperty({
+            glowPower: 0.1,
+            color: Cesium.Color.fromCssColorString("#00FFFF").withAlpha(0.35),
+          }),
+          width: 1,
+          leadTime: new Cesium.ConstantProperty(0),
+          trailTime: new Cesium.ConstantProperty(1800), // 30-minute trail
+        }),
+        // Store SelectedInfo on the entity so the click handler can read it
+        properties: new Cesium.PropertyBag({
+          info: { type: "satellite", data: { norad_id: tle.norad_id, name: tle.name } } satisfies SelectedInfo,
+        }),
       });
     }
+
+    sat.entities.resumeEvents();
 
     // Earthquakes — orange/red dots sized by magnitude
     eq.removeAll();
@@ -415,7 +485,7 @@ export default function GlobeView({ payload, layers, visualMode, onViewerReady }
   useEffect(() => {
     if (aircraftColRef.current) aircraftColRef.current.show = layers.aircraft;
     if (militaryColRef.current) militaryColRef.current.show = layers.military;
-    if (satelliteColRef.current) satelliteColRef.current.show = layers.satellites;
+    if (satelliteDsRef.current) satelliteDsRef.current.show = layers.satellites;
     if (earthquakeColRef.current) earthquakeColRef.current.show = layers.earthquakes;
   }, [layers]);
 

@@ -17,13 +17,11 @@ class AircraftPosition(BaseModel):
     last_contact: Optional[int] = None
 
 
-class SatellitePosition(BaseModel):
+class TLERecord(BaseModel):
     norad_id: str
     name: str
-    longitude: float
-    latitude: float
-    altitude_km: float
-    velocity_km_s: float
+    line1: str
+    line2: str
 
 
 class EarthquakeEvent(BaseModel):
@@ -55,7 +53,7 @@ class GeoJSONFeatureCollection(BaseModel):
 class WorldPayload(BaseModel):
     aircraft: GeoJSONFeatureCollection
     military: GeoJSONFeatureCollection
-    satellites: GeoJSONFeatureCollection
+    tles: list[TLERecord]
     earthquakes: GeoJSONFeatureCollection
     counts: dict
     timestamp: float = Field(default_factory=time.time)

@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ingestion.opensky import fetch_aircraft
 from ingestion.adsb_exchange import fetch_military_aircraft
-from ingestion.celestrak import fetch_satellites
+from ingestion.celestrak import fetch_tles
 from ingestion.usgs import fetch_earthquakes
 from models.schemas import (
     AircraftPosition,
@@ -16,7 +16,7 @@ from models.schemas import (
     GeoJSONFeature,
     GeoJSONFeatureCollection,
     GeoJSONPoint,
-    SatellitePosition,
+    TLERecord,
     WorldPayload,
 )
 from config import settings
@@ -81,25 +81,6 @@ def _build_aircraft_geojson(aircraft_list: list[AircraftPosition]) -> GeoJSONFea
     return GeoJSONFeatureCollection(features=features)
 
 
-def _build_satellite_geojson(satellites: list[SatellitePosition]) -> GeoJSONFeatureCollection:
-    features = []
-    for sat in satellites:
-        features.append(
-            GeoJSONFeature(
-                geometry=GeoJSONPoint(
-                    coordinates=[sat.longitude, sat.latitude, sat.altitude_km * 1000]
-                ),
-                properties={
-                    "norad_id": sat.norad_id,
-                    "name": sat.name,
-                    "altitude_km": sat.altitude_km,
-                    "velocity_km_s": sat.velocity_km_s,
-                },
-            )
-        )
-    return GeoJSONFeatureCollection(features=features)
-
-
 def _build_earthquake_geojson(quakes: list[EarthquakeEvent]) -> GeoJSONFeatureCollection:
     features = []
     for eq in quakes:
@@ -126,36 +107,34 @@ async def broadcast_loop() -> None:
             if manager.connection_count > 0:
                 results = await asyncio.gather(
                     fetch_aircraft(),
-                    fetch_satellites(),
+                    fetch_tles(),
                     fetch_earthquakes(),
                     return_exceptions=True,
                 )
 
                 aircraft = results[0] if not isinstance(results[0], BaseException) else []
-                satellites = results[1] if not isinstance(results[1], BaseException) else []
-                quakes = results[2] if not isinstance(results[2], BaseException) else []
-                # Pass the already-fetched aircraft so military filtering reuses
-                # the same data instead of making a second OpenSky request.
+                tles     = results[1] if not isinstance(results[1], BaseException) else []
+                quakes   = results[2] if not isinstance(results[2], BaseException) else []
                 military = await fetch_military_aircraft(aircraft)
 
                 payload = WorldPayload(
                     aircraft=_build_aircraft_geojson(aircraft),
                     military=_build_aircraft_geojson(military),
-                    satellites=_build_satellite_geojson(satellites),
+                    tles=tles,
                     earthquakes=_build_earthquake_geojson(quakes),
                     counts={
                         "aircraft": len(aircraft),
                         "military": len(military),
-                        "satellites": len(satellites),
+                        "satellites": len(tles),
                         "earthquakes": len(quakes),
                     },
                 )
                 await manager.broadcast(payload.model_dump_json())
                 logger.info(
-                    "Broadcast: ac=%d mil=%d sat=%d eq=%d to %d client(s)",
+                    "Broadcast: ac=%d mil=%d tle=%d eq=%d to %d client(s)",
                     len(aircraft),
                     len(military),
-                    len(satellites),
+                    len(tles),
                     len(quakes),
                     manager.connection_count,
                 )
