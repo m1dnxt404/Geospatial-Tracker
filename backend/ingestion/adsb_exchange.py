@@ -26,16 +26,23 @@ def _is_military_icao(icao24: str) -> bool:
     return icao24.lower().startswith(MILITARY_ICAO_PREFIXES)
 
 
-async def fetch_military_aircraft() -> list[AircraftPosition]:
+async def fetch_military_aircraft(
+    all_aircraft: list[AircraftPosition] | None = None,
+) -> list[AircraftPosition]:
     """Fetch military aircraft positions.
 
     Tries ADS-B Exchange API if ADSB_API_KEY is configured.
-    Falls back to filtering the OpenSky feed by military ICAO prefixes.
+    Otherwise filters ``all_aircraft`` (if provided) or falls back to a
+    fresh OpenSky fetch.  Passing pre-fetched aircraft avoids a redundant
+    API call when the caller already holds the global aircraft list.
     Returns an empty list on failure — never raises.
     """
-    api_key = getattr(settings, "ADSB_API_KEY", "")
-    if api_key:
-        return await _fetch_from_adsb_exchange(api_key)
+    if settings.ADSB_API_KEY:
+        return await _fetch_from_adsb_exchange(settings.ADSB_API_KEY)
+    if all_aircraft is not None:
+        military = [a for a in all_aircraft if _is_military_icao(a.icao24)]
+        logger.info("Filtered %d military aircraft from pre-fetched data", len(military))
+        return military
     return await _fetch_from_opensky_filter()
 
 

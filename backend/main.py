@@ -126,16 +126,17 @@ async def broadcast_loop() -> None:
             if manager.connection_count > 0:
                 results = await asyncio.gather(
                     fetch_aircraft(),
-                    fetch_military_aircraft(),
                     fetch_satellites(),
                     fetch_earthquakes(),
                     return_exceptions=True,
                 )
 
                 aircraft = results[0] if not isinstance(results[0], BaseException) else []
-                military = results[1] if not isinstance(results[1], BaseException) else []
-                satellites = results[2] if not isinstance(results[2], BaseException) else []
-                quakes = results[3] if not isinstance(results[3], BaseException) else []
+                satellites = results[1] if not isinstance(results[1], BaseException) else []
+                quakes = results[2] if not isinstance(results[2], BaseException) else []
+                # Pass the already-fetched aircraft so military filtering reuses
+                # the same data instead of making a second OpenSky request.
+                military = await fetch_military_aircraft(aircraft)
 
                 payload = WorldPayload(
                     aircraft=_build_aircraft_geojson(aircraft),

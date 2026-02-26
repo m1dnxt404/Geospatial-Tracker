@@ -2,7 +2,7 @@
 
 A live 3D geospatial tracker that displays **aircraft, military flights, satellites, and earthquakes** on a rotating globe in real time. Built with FastAPI (WebSocket backend) and React + CesiumJS (3D frontend). Includes CRT, Night Vision, and FLIR thermal visual modes.
 
-**Running cost: $0 — no API keys, no accounts required.**
+**Running cost: $0.** A free OpenSky account is recommended for reliable aircraft data (anonymous access is heavily rate-limited). All other sources require no registration.
 
 ---
 
@@ -41,7 +41,7 @@ React Frontend
 | --- | --- | --- | --- | --- |
 | Aircraft | OpenSky Network | `/api/states/all` | Free | 10 s |
 | Military | ADS-B Exchange | `/v2/mil/` (fallback: ICAO prefix filter) | Free | 10 s |
-| Satellites | CelesTrak + sgp4 | `celestrak.org/SOCRATES/active.txt` | Free | TLE 30 min, positions live |
+| Satellites | CelesTrak + sgp4 | `celestrak.org/pub/TLE/active.txt` | Free | TLE 30 min, positions live |
 | Earthquakes | USGS FDSNWS | `/fdsnws/event/1/query?minmagnitude=2.5` | Free | 60 s |
 
 ---
@@ -52,7 +52,7 @@ React Frontend
 - **Node.js 20+** and **npm**
 - **Docker + Docker Compose** (optional)
 
-No API keys or accounts needed.
+A free [OpenSky Network](https://opensky-network.org) account is strongly recommended. All other data sources need no credentials.
 
 ---
 
@@ -68,9 +68,9 @@ cp .env.example .env
 The default `.env` works out of the box. Optional extras:
 
 ```text
-# Higher OpenSky rate limits
-OPENSKY_USERNAME=your_opensky_username
-OPENSKY_PASSWORD=your_opensky_password
+# OpenSky OAuth2 credentials (recommended — from your OpenSky account settings page)
+OPENSKY_CLIENT_ID=your_client_id
+OPENSKY_CLIENT_SECRET=your_client_secret
 
 # Military aircraft via ADS-B Exchange (falls back to ICAO prefix filter without this)
 ADSB_API_KEY=your_adsb_exchange_key
@@ -185,8 +185,10 @@ Geospatial Tracker/
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `OPENSKY_USERNAME` | No | — | OpenSky account for higher rate limits |
-| `OPENSKY_PASSWORD` | No | — | OpenSky account password |
+| `OPENSKY_CLIENT_ID` | Recommended | — | OAuth2 client ID from OpenSky account settings (preferred auth method) |
+| `OPENSKY_CLIENT_SECRET` | Recommended | — | OAuth2 client secret paired with the above |
+| `OPENSKY_USERNAME` | No | — | Legacy Basic Auth username (used only if OAuth2 credentials are absent) |
+| `OPENSKY_PASSWORD` | No | — | Legacy Basic Auth password |
 | `ADSB_API_KEY` | No | — | ADS-B Exchange key; falls back to ICAO filter without it |
 | `POLLING_INTERVAL_SECONDS` | No | `10` | How often to fetch all data sources |
 | `VITE_WS_URL` | No | `ws://localhost:8000/ws/live` | WebSocket URL override (frontend) |
@@ -240,7 +242,7 @@ Satellite coordinates include altitude as the third element: `[lon, lat, altMete
 | Anonymous | 400 credits/day (~40 requests) | Default, no setup needed |
 | Registered (free) | 4,000 credits/day | Add credentials to `.env` |
 
-At 10 s polling, anonymous access uses ~8,640 requests/day — register a free account at [opensky-network.org](https://opensky-network.org).
+At 10 s polling, anonymous access far exceeds the daily credit limit — aircraft will consistently return 0 results. Register a free account at [opensky-network.org](https://opensky-network.org) and add credentials to `.env`.
 
 ### CelesTrak
 
@@ -260,4 +262,3 @@ See [Enhancements.md](Enhancements.md) for the full roadmap. Quick wins:
 - **More satellites** — raise `MAX_SATELLITES` in [backend/ingestion/celestrak.py](backend/ingestion/celestrak.py)
 - **Different basemap** — swap the CartoDB URL in [frontend/src/components/GlobeView.tsx](frontend/src/components/GlobeView.tsx) for any `{z}/{x}/{y}` tile server
 - **Aircraft trails** — store position history per `icao24` and draw `Polyline` primitives in GlobeView
-- **Click info panel** — add a `screenSpaceEventHandler` in GlobeView to show entity details on click
