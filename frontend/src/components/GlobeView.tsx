@@ -232,6 +232,112 @@ function createSatelliteIcon(color = "#00FFFF", size = 24): string {
 
 const SATELLITE_ICON = createSatelliteIcon();
 
+// ── Aircraft icons ─────────────────────────────────────────────────────────────
+
+type AircraftCategory = "WIDE" | "NARROW" | "REGIONAL" | "HELI" | "GENERAL";
+
+const ICON_SIZES: Record<AircraftCategory, number> = {
+  WIDE: 28, NARROW: 22, REGIONAL: 17, HELI: 17, GENERAL: 17,
+};
+
+// Distance (metres from camera to surface) above which icons switch to dots.
+const ICON_MAX_DISTANCE = 3_000_000;
+
+function getAircraftCategory(typecode: string): AircraftCategory {
+  const t = (typecode ?? "").toUpperCase();
+  if (!t) return "GENERAL";
+  // Helicopters
+  if (/^(EC|R22|R44|H6|AS3|AW|S76|B06|MBB|PZL)/.test(t)) return "HELI";
+  // Wide-body jets
+  if (/^(B74|B77|B78|A38|A35|A34|A33|IL9|AN1|C17|B76)/.test(t)) return "WIDE";
+  // Narrow-body jets
+  if (/^(B73|B75|B71|B72|A31|A32|MD8|MD9|DC9|73|32|TU2|YA4)/.test(t)) return "NARROW";
+  // Regional / turboprops
+  if (/^(CRJ|E17|E19|E75|AT4|AT7|DH8|SF3|BE2|E50|C56|C17|P28|C208|PC12|JS4|SA2)/.test(t)) return "REGIONAL";
+  return "GENERAL";
+}
+
+function createAircraftIcon(category: AircraftCategory): string {
+  const s = ICON_SIZES[category];
+  const canvas = document.createElement("canvas");
+  canvas.width = s;
+  canvas.height = s;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#FFFFFF";
+  ctx.strokeStyle = "#FFFFFF";
+  const cx = s / 2;
+
+  if (category === "HELI") {
+    // Rotor cross + oval body
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(2, cx); ctx.lineTo(s - 2, cx); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, 2); ctx.lineTo(cx, s - 2); ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(cx, cx + 1, 2.5, 3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    return canvas.toDataURL();
+  }
+
+  // Fixed-wing silhouette — nose points UP (positive Y down in canvas)
+  const fuseW = category === "WIDE" ? 2.8 : category === "NARROW" ? 2.2 : 1.7;
+  const noseY = 2;
+  const tailY = s - 3;
+
+  // Fuselage (tapered body)
+  ctx.beginPath();
+  ctx.moveTo(cx, noseY);
+  ctx.lineTo(cx + fuseW, noseY + fuseW * 2.5);
+  ctx.lineTo(cx + fuseW, tailY - fuseW * 1.5);
+  ctx.lineTo(cx, tailY);
+  ctx.lineTo(cx - fuseW, tailY - fuseW * 1.5);
+  ctx.lineTo(cx - fuseW, noseY + fuseW * 2.5);
+  ctx.closePath();
+  ctx.fill();
+
+  // Main wings
+  const wingSpan = category === "WIDE" ? s * 0.93 : category === "NARROW" ? s * 0.82 : s * 0.76;
+  const wingY    = s * 0.43;
+  const sweep    = category === "WIDE" ? s * 0.13 : category === "NARROW" ? s * 0.10 : s * 0.05;
+  const chord    = s * 0.13;
+
+  ctx.beginPath();
+  ctx.moveTo(cx,                wingY);
+  ctx.lineTo(cx - wingSpan / 2, wingY + sweep + chord);
+  ctx.lineTo(cx - wingSpan / 2, wingY + sweep);
+  ctx.lineTo(cx,                wingY - chord * 0.15);
+  ctx.lineTo(cx + wingSpan / 2, wingY + sweep);
+  ctx.lineTo(cx + wingSpan / 2, wingY + sweep + chord);
+  ctx.closePath();
+  ctx.fill();
+
+  // Tail stabilizer
+  const tSpan  = wingSpan * 0.36;
+  const tBaseY = s - 4;
+  const tSweep = tSpan * (category === "WIDE" ? 0.28 : 0.18);
+  const tChord = tSpan * 0.18;
+
+  ctx.beginPath();
+  ctx.moveTo(cx,             tBaseY);
+  ctx.lineTo(cx - tSpan / 2, tBaseY + tSweep + tChord);
+  ctx.lineTo(cx - tSpan / 2, tBaseY + tSweep);
+  ctx.lineTo(cx,             tBaseY - tChord * 0.2);
+  ctx.lineTo(cx + tSpan / 2, tBaseY + tSweep);
+  ctx.lineTo(cx + tSpan / 2, tBaseY + tSweep + tChord);
+  ctx.closePath();
+  ctx.fill();
+
+  return canvas.toDataURL();
+}
+
+const AIRCRAFT_ICONS: Record<AircraftCategory, string> = {
+  WIDE:     createAircraftIcon("WIDE"),
+  NARROW:   createAircraftIcon("NARROW"),
+  REGIONAL: createAircraftIcon("REGIONAL"),
+  HELI:     createAircraftIcon("HELI"),
+  GENERAL:  createAircraftIcon("GENERAL"),
+};
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function GlobeView({ payload, layers, visualMode, weatherLayers, onViewerReady }: GlobeViewProps) {
@@ -245,6 +351,8 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
   const earthquakeColRef = useRef<Cesium.PointPrimitiveCollection | null>(null);
   const aircraftTrailsRef = useRef<Cesium.PolylineCollection | null>(null);
   const militaryTrailsRef = useRef<Cesium.PolylineCollection | null>(null);
+  const aircraftBillboardsRef = useRef<Cesium.BillboardCollection | null>(null);
+  const militaryBillboardsRef = useRef<Cesium.BillboardCollection | null>(null);
 
   const crtStageRef = useRef<Cesium.PostProcessStage | null>(null);
   const nvStageRef = useRef<Cesium.PostProcessStage | null>(null);
@@ -361,6 +469,15 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
     aircraftTrailsRef.current = aircraftTrails;
     militaryTrailsRef.current = militaryTrails;
 
+    const aircraftBillboards = viewer.scene.primitives.add(
+      new Cesium.BillboardCollection({ scene: viewer.scene })
+    ) as Cesium.BillboardCollection;
+    const militaryBillboards = viewer.scene.primitives.add(
+      new Cesium.BillboardCollection({ scene: viewer.scene })
+    ) as Cesium.BillboardCollection;
+    aircraftBillboardsRef.current = aircraftBillboards;
+    militaryBillboardsRef.current = militaryBillboards;
+
     // ── Satellite data source (entity-based for SampledPositionProperty) ──────
     const satelliteDs = new Cesium.CustomDataSource("satellites");
     viewer.dataSources.add(satelliteDs);
@@ -435,6 +552,8 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
       earthquakeColRef.current = null;
       aircraftTrailsRef.current = null;
       militaryTrailsRef.current = null;
+      aircraftBillboardsRef.current = null;
+      militaryBillboardsRef.current = null;
       crtStageRef.current = null;
       nvStageRef.current = null;
       flirStageRef.current = null;
@@ -455,10 +574,16 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
     const eq = earthquakeColRef.current;
     const acTrails = aircraftTrailsRef.current;
     const milTrails = militaryTrailsRef.current;
-    if (!ac || !mil || !sat || !eq || !acTrails || !milTrails) return;
+    const acBillboards = aircraftBillboardsRef.current;
+    const milBillboards = militaryBillboardsRef.current;
+    if (!ac || !mil || !sat || !eq || !acTrails || !milTrails || !acBillboards || !milBillboards) return;
 
-    // Aircraft — white/cyan dots coloured by altitude
+    const DOT_RANGE   = new Cesium.DistanceDisplayCondition(ICON_MAX_DISTANCE, Number.MAX_VALUE);
+    const ICON_RANGE  = new Cesium.DistanceDisplayCondition(0, ICON_MAX_DISTANCE);
+
+    // Aircraft — silhouette icons (close) + dots (far out)
     ac.removeAll();
+    acBillboards.removeAll();
     acTrails.removeAll();
     for (const f of payload.aircraft.features) {
       const [lon, lat] = f.geometry.coordinates as [number, number];
@@ -470,14 +595,37 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
           : alt > 4000
           ? Cesium.Color.fromCssColorString("#87CEEB")
           : Cesium.Color.WHITE;
+      const pos = Cesium.Cartesian3.fromDegrees(lon, lat, clampedAlt);
+      const id: SelectedInfo = { type: "aircraft", data: f.properties };
+
+      // Dot for far zoom
       ac.add({
-        position: Cesium.Cartesian3.fromDegrees(lon, lat, clampedAlt),
+        position: pos,
         color,
         pixelSize: 4,
         outlineColor: color.withAlpha(0.25),
         outlineWidth: 1,
-        id: { type: "aircraft", data: f.properties } satisfies SelectedInfo,
+        distanceDisplayCondition: DOT_RANGE,
+        id,
       });
+
+      // Silhouette icon for close zoom
+      const category = getAircraftCategory(f.properties.typecode as string ?? "");
+      const heading = (f.properties.heading as number | null) ?? 0;
+      acBillboards.add({
+        position: pos,
+        image: AIRCRAFT_ICONS[category],
+        width:  ICON_SIZES[category],
+        height: ICON_SIZES[category],
+        color,
+        rotation: -(heading * Math.PI / 180),
+        alignedAxis: Cesium.Cartesian3.UNIT_Z,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        distanceDisplayCondition: ICON_RANGE,
+        id,
+      });
+
+      // Trail
       const trail = (f.properties.trail as number[][] | undefined) ?? [];
       if (trail.length >= 2) {
         for (let i = 0; i < trail.length - 1; i++) {
@@ -494,20 +642,44 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
       }
     }
 
-    // Military — red dots
+    // Military — silhouette icons (close) + dots (far out), red tint
     mil.removeAll();
+    milBillboards.removeAll();
     milTrails.removeAll();
     for (const f of payload.military.features) {
       const [lon, lat] = f.geometry.coordinates as [number, number];
       const alt = Math.max((f.properties.altitude as number | null) ?? 0, 0);
+      const pos = Cesium.Cartesian3.fromDegrees(lon, lat, alt);
+      const id: SelectedInfo = { type: "military", data: f.properties };
+
+      // Dot for far zoom
       mil.add({
-        position: Cesium.Cartesian3.fromDegrees(lon, lat, alt),
+        position: pos,
         color: Cesium.Color.RED,
         pixelSize: 6,
         outlineColor: Cesium.Color.fromCssColorString("#FF4444").withAlpha(0.4),
         outlineWidth: 2,
-        id: { type: "military", data: f.properties } satisfies SelectedInfo,
+        distanceDisplayCondition: DOT_RANGE,
+        id,
       });
+
+      // Silhouette icon for close zoom
+      const category = getAircraftCategory(f.properties.typecode as string ?? "");
+      const heading = (f.properties.heading as number | null) ?? 0;
+      milBillboards.add({
+        position: pos,
+        image: AIRCRAFT_ICONS[category],
+        width:  ICON_SIZES[category],
+        height: ICON_SIZES[category],
+        color: Cesium.Color.RED,
+        rotation: -(heading * Math.PI / 180),
+        alignedAxis: Cesium.Cartesian3.UNIT_Z,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        distanceDisplayCondition: ICON_RANGE,
+        id,
+      });
+
+      // Trail
       const trail = (f.properties.trail as number[][] | undefined) ?? [];
       if (trail.length >= 2) {
         for (let i = 0; i < trail.length - 1; i++) {
@@ -622,7 +794,9 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
   // ── Layer visibility ───────────────────────────────────────────────────────
   useEffect(() => {
     if (aircraftColRef.current) aircraftColRef.current.show = layers.aircraft;
+    if (aircraftBillboardsRef.current) aircraftBillboardsRef.current.show = layers.aircraft;
     if (militaryColRef.current) militaryColRef.current.show = layers.military;
+    if (militaryBillboardsRef.current) militaryBillboardsRef.current.show = layers.military;
     if (satelliteDsRef.current) satelliteDsRef.current.show = layers.satellites;
     if (earthquakeColRef.current) earthquakeColRef.current.show = layers.earthquakes;
     if (aircraftTrailsRef.current) aircraftTrailsRef.current.show = layers.trails;

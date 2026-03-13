@@ -11,6 +11,7 @@ from ingestion.opensky import fetch_aircraft
 from ingestion.adsb_exchange import fetch_military_aircraft
 from ingestion.celestrak import fetch_tles
 from ingestion.usgs import fetch_earthquakes
+from ingestion.aircraft_metadata import fetch_new_typecodes, get_typecode
 from models.schemas import (
     AircraftPosition,
     EarthquakeEvent,
@@ -94,6 +95,7 @@ def _build_aircraft_geojson(aircraft_list: list[AircraftPosition]) -> GeoJSONFea
                     "vertical_rate": ac.vertical_rate,
                     "on_ground": ac.on_ground,
                     "trail": list(_position_history.get(ac.icao24, [])),
+                    "typecode": get_typecode(ac.icao24),
                 },
             )
         )
@@ -142,6 +144,7 @@ async def broadcast_loop() -> None:
                 for m in military:
                     all_tracked.setdefault(m.icao24, m)
                 _update_position_history(list(all_tracked.values()))
+                await fetch_new_typecodes(list(all_tracked.keys()))
 
                 payload = WorldPayload(
                     aircraft=_build_aircraft_geojson(aircraft),
