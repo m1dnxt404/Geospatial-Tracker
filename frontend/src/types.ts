@@ -59,6 +59,7 @@ export interface LayerVisibility {
   military: boolean;
   satellites: boolean;
   earthquakes: boolean;
+  trails: boolean;
 }
 
 export type VisualMode = "normal" | "crt" | "nightvision" | "flir";

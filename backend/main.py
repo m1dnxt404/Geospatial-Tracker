@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -57,6 +58,23 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+_position_history: dict[str, deque] = {}
+TRAIL_MAX_LENGTH = 10
+
+
+def _update_position_history(aircraft_list: list[AircraftPosition]) -> None:
+    active: set[str] = set()
+    for ac in aircraft_list:
+        if ac.latitude is None or ac.longitude is None:
+            continue
+        active.add(ac.icao24)
+        if ac.icao24 not in _position_history:
+            _position_history[ac.icao24] = deque(maxlen=TRAIL_MAX_LENGTH)
+        _position_history[ac.icao24].append([ac.longitude, ac.latitude, ac.altitude])
+    for key in list(_position_history):
+        if key not in active:
+            del _position_history[key]
+
 
 def _build_aircraft_geojson(aircraft_list: list[AircraftPosition]) -> GeoJSONFeatureCollection:
     features = []
@@ -75,6 +93,7 @@ def _build_aircraft_geojson(aircraft_list: list[AircraftPosition]) -> GeoJSONFea
                     "heading": ac.heading,
                     "vertical_rate": ac.vertical_rate,
                     "on_ground": ac.on_ground,
+                    "trail": list(_position_history.get(ac.icao24, [])),
                 },
             )
         )
@@ -116,6 +135,13 @@ async def broadcast_loop() -> None:
                 tles     = results[1] if not isinstance(results[1], BaseException) else []
                 quakes   = results[2] if not isinstance(results[2], BaseException) else []
                 military = await fetch_military_aircraft(aircraft)
+
+                # Deduplicate by icao24 so military aircraft (often a subset of
+                # civilian fetch) don't get double-counted in history.
+                all_tracked = {ac.icao24: ac for ac in aircraft}
+                for m in military:
+                    all_tracked.setdefault(m.icao24, m)
+                _update_position_history(list(all_tracked.values()))
 
                 payload = WorldPayload(
                     aircraft=_build_aircraft_geojson(aircraft),

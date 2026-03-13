@@ -243,6 +243,8 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
   const militaryColRef = useRef<Cesium.PointPrimitiveCollection | null>(null);
   const satelliteDsRef = useRef<Cesium.CustomDataSource | null>(null);
   const earthquakeColRef = useRef<Cesium.PointPrimitiveCollection | null>(null);
+  const aircraftTrailsRef = useRef<Cesium.PolylineCollection | null>(null);
+  const militaryTrailsRef = useRef<Cesium.PolylineCollection | null>(null);
 
   const crtStageRef = useRef<Cesium.PostProcessStage | null>(null);
   const nvStageRef = useRef<Cesium.PostProcessStage | null>(null);
@@ -350,6 +352,15 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
     militaryColRef.current = militaryCol;
     earthquakeColRef.current = earthquakeCol;
 
+    const aircraftTrails = viewer.scene.primitives.add(
+      new Cesium.PolylineCollection()
+    ) as Cesium.PolylineCollection;
+    const militaryTrails = viewer.scene.primitives.add(
+      new Cesium.PolylineCollection()
+    ) as Cesium.PolylineCollection;
+    aircraftTrailsRef.current = aircraftTrails;
+    militaryTrailsRef.current = militaryTrails;
+
     // ── Satellite data source (entity-based for SampledPositionProperty) ──────
     const satelliteDs = new Cesium.CustomDataSource("satellites");
     viewer.dataSources.add(satelliteDs);
@@ -422,6 +433,8 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
       militaryColRef.current = null;
       satelliteDsRef.current = null;
       earthquakeColRef.current = null;
+      aircraftTrailsRef.current = null;
+      militaryTrailsRef.current = null;
       crtStageRef.current = null;
       nvStageRef.current = null;
       flirStageRef.current = null;
@@ -440,10 +453,13 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
     const mil = militaryColRef.current;
     const sat = satelliteDsRef.current;
     const eq = earthquakeColRef.current;
-    if (!ac || !mil || !sat || !eq) return;
+    const acTrails = aircraftTrailsRef.current;
+    const milTrails = militaryTrailsRef.current;
+    if (!ac || !mil || !sat || !eq || !acTrails || !milTrails) return;
 
     // Aircraft — white/cyan dots coloured by altitude
     ac.removeAll();
+    acTrails.removeAll();
     for (const f of payload.aircraft.features) {
       const [lon, lat] = f.geometry.coordinates as [number, number];
       const alt = (f.properties.altitude as number | null) ?? 0;
@@ -462,10 +478,25 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
         outlineWidth: 1,
         id: { type: "aircraft", data: f.properties } satisfies SelectedInfo,
       });
+      const trail = (f.properties.trail as number[][] | undefined) ?? [];
+      if (trail.length >= 2) {
+        for (let i = 0; i < trail.length - 1; i++) {
+          const alpha = ((i + 1) / (trail.length - 1)) * 0.7;
+          acTrails.add({
+            positions: [
+              Cesium.Cartesian3.fromDegrees(trail[i][0], trail[i][1], Math.max(trail[i][2] ?? 0, 0)),
+              Cesium.Cartesian3.fromDegrees(trail[i + 1][0], trail[i + 1][1], Math.max(trail[i + 1][2] ?? 0, 0)),
+            ],
+            width: 1,
+            material: Cesium.Material.fromType("Color", { color: color.withAlpha(alpha) }),
+          });
+        }
+      }
     }
 
     // Military — red dots
     mil.removeAll();
+    milTrails.removeAll();
     for (const f of payload.military.features) {
       const [lon, lat] = f.geometry.coordinates as [number, number];
       const alt = Math.max((f.properties.altitude as number | null) ?? 0, 0);
@@ -477,6 +508,20 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
         outlineWidth: 2,
         id: { type: "military", data: f.properties } satisfies SelectedInfo,
       });
+      const trail = (f.properties.trail as number[][] | undefined) ?? [];
+      if (trail.length >= 2) {
+        for (let i = 0; i < trail.length - 1; i++) {
+          const alpha = ((i + 1) / (trail.length - 1)) * 0.7;
+          milTrails.add({
+            positions: [
+              Cesium.Cartesian3.fromDegrees(trail[i][0], trail[i][1], Math.max(trail[i][2] ?? 0, 0)),
+              Cesium.Cartesian3.fromDegrees(trail[i + 1][0], trail[i + 1][1], Math.max(trail[i + 1][2] ?? 0, 0)),
+            ],
+            width: 1,
+            material: Cesium.Material.fromType("Color", { color: Cesium.Color.RED.withAlpha(alpha) }),
+          });
+        }
+      }
     }
 
     // Satellites — animated entities driven by SampledPositionProperty + satellite.js SGP4
@@ -580,6 +625,8 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
     if (militaryColRef.current) militaryColRef.current.show = layers.military;
     if (satelliteDsRef.current) satelliteDsRef.current.show = layers.satellites;
     if (earthquakeColRef.current) earthquakeColRef.current.show = layers.earthquakes;
+    if (aircraftTrailsRef.current) aircraftTrailsRef.current.show = layers.trails;
+    if (militaryTrailsRef.current) militaryTrailsRef.current.show = layers.trails;
   }, [layers]);
 
   // ── Visual mode shaders ────────────────────────────────────────────────────

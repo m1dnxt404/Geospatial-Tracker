@@ -13,6 +13,7 @@ const DEFAULT_LAYERS: LayerVisibility = {
   military: true,
   satellites: true,
   earthquakes: true,
+  trails: true,
 };
 
 const DEFAULT_WEATHER: WeatherLayers = {

@@ -28,6 +28,7 @@ const LAYER_CONFIG: Array<{
   { key: "military", label: "Military", icon: "⬟", color: "#FF4444" },
   { key: "satellites", label: "Satellites", icon: "◎", color: "#00FFFF" },
   { key: "earthquakes", label: "Earthquakes", icon: "⬡", color: "#FF8C00" },
+  { key: "trails", label: "Trails", icon: "—", color: "#87CEEB" },
 ];
 
 const WEATHER_CONFIG: Array<{
