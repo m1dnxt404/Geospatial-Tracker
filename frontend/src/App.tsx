@@ -3,6 +3,7 @@ import * as Cesium from "cesium";
 import GlobeView from "./components/GlobeView";
 import { ControlPanel } from "./components/ControlPanel";
 import { CameraPresets } from "./components/CameraPresets";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useWebSocket } from "./hooks/useWebSocket";
 import type { LayerVisibility, VisualMode, WeatherLayers } from "./types";
 
@@ -62,13 +63,15 @@ export default function App(): React.ReactElement {
 
   return (
     <div style={{ width: "100vw", height: "100vh", position: "relative", overflow: "hidden" }}>
-      <GlobeView
-        payload={payload}
-        layers={layers}
-        visualMode={visualMode}
-        weatherLayers={weatherLayers}
-        onViewerReady={handleViewerReady}
-      />
+      <ErrorBoundary>
+        <GlobeView
+          payload={payload}
+          layers={layers}
+          visualMode={visualMode}
+          weatherLayers={weatherLayers}
+          onViewerReady={handleViewerReady}
+        />
+      </ErrorBoundary>
       <ControlPanel
         counts={counts}
         status={status}

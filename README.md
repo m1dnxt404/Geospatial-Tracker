@@ -37,6 +37,7 @@ React Frontend
   ├── Weather overlays — OpenWeatherMap tile layers (clouds/rain/wind/temp/pressure)
   │     Cesium ImageryLayer per type; toggled independently; no backend required
   └── PostProcessStage — CRT / Night Vision / FLIR shaders
+  ErrorBoundary.tsx — catches GlobeView render errors; shows "Rendering error — click to retry" fallback
   ControlPanel.tsx — layer toggles (incl. Trails) + visual mode + weather toggles
   CameraPresets.tsx — one-click flyTo for 8 world cities
 ```
@@ -196,6 +197,7 @@ Geospatial Tracker/
 │   │   │   └── useWebSocket.ts  # WS hook with exponential backoff reconnect
 │   │   └── components/
 │   │       ├── GlobeView.tsx    # CesiumJS 3D globe + 4 data layers + weather imagery + GLSL shaders
+│   │       ├── ErrorBoundary.tsx# Catches GlobeView render errors; shows retry fallback
 │   │       ├── ControlPanel.tsx # Layer toggles + visual mode + weather toggles
 │   │       └── CameraPresets.tsx# 8-city flyTo shortcuts
 │   ├── vite.config.ts           # Vite + vite-plugin-cesium
