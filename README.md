@@ -51,14 +51,14 @@ React Frontend
 
 ## Data Sources
 
-| Layer | Source | Endpoint | Cost | Refresh |
-| --- | --- | --- | --- | --- |
-| Aircraft | OpenSky Network | `/api/states/all` | Free | 10 s |
-| Aircraft type & model | OpenSky Metadata | `/api/metadata/aircraft/icao/{icao24}` | Free | Permanent cache |
-| Military | ADS-B Exchange | `/v2/mil/` (fallback: ICAO prefix filter) | Free | 10 s |
-| Satellites | CelesTrak | `celestrak.org/pub/TLE/active.txt` | Free | TLE cache 30 min |
-| Earthquakes | USGS FDSNWS | `/fdsnws/event/1/query?minmagnitude=2.5` | Free | 60 s |
-| Weather | OpenWeatherMap | `tile.openweathermap.org/map/{layer}/{z}/{x}/{y}.png` | Free (API key) | Browser tile cache |
+| Layer                 | Source           | Endpoint                                              | Cost           | Refresh            |
+| --------------------- | ---------------- | ----------------------------------------------------- | -------------- | ------------------ |
+| Aircraft              | OpenSky Network  | `/api/states/all`                                     | Free           | 10 s               |
+| Aircraft type & model | OpenSky Metadata | `/api/metadata/aircraft/icao/{icao24}`                | Free           | Permanent cache    |
+| Military              | ADS-B Exchange   | `/v2/mil/` (fallback: ICAO prefix filter)             | Free           | 10 s               |
+| Satellites            | CelesTrak        | `celestrak.org/pub/TLE/active.txt`                    | Free           | TLE cache 30 min   |
+| Earthquakes           | USGS FDSNWS      | `/fdsnws/event/1/query?minmagnitude=2.5`              | Free           | 60 s               |
+| Weather               | OpenWeatherMap   | `tile.openweathermap.org/map/{layer}/{z}/{x}/{y}.png` | Free (API key) | Browser tile cache |
 
 ---
 
@@ -137,36 +137,36 @@ docker compose up --build
 
 ### Data Layers (left panel)
 
-| Layer | Colour | Description |
-| --- | --- | --- |
-| Aircraft | Green → Yellow → Cyan | Civil flights; top-down silhouette icons (zoomed in) or dots (zoomed out); colour encodes altitude 0–15,000 m |
-| Military | Red | Military aircraft via ADS-B Exchange or ICAO prefix fallback; red silhouette icons or dots |
-| Satellites | Cyan | Up to 500 active satellites, animated in real time with a 30-minute orbital trail; click to see altitude & velocity |
-| Earthquakes | Orange → Red | M2.5+ events sized by magnitude |
-| Trails | Green → Yellow → Cyan | Fading polyline trail behind each aircraft showing the last 10 positions (~100 s of history) |
-| Heatmap | Blue → Red | Aircraft density overlay; filterable by altitude band via Min/Max sliders |
+| Layer       | Colour                | Description                                                                                                         |
+| ----------- | --------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Aircraft    | Green → Yellow → Cyan | Civil flights; top-down silhouette icons (zoomed in) or dots (zoomed out); colour encodes altitude 0–15,000 m       |
+| Military    | Red                   | Military aircraft via ADS-B Exchange or ICAO prefix fallback; red silhouette icons or dots                          |
+| Satellites  | Cyan                  | Up to 500 active satellites, animated in real time with a 30-minute orbital trail; click to see altitude & velocity |
+| Earthquakes | Orange → Red          | M2.5+ events sized by magnitude                                                                                     |
+| Trails      | Green → Yellow → Cyan | Fading polyline trail behind each aircraft showing the last 10 positions (~100 s of history)                        |
+| Heatmap     | Blue → Red            | Aircraft density overlay; filterable by altitude band via Min/Max sliders                                           |
 
 Click the coloured button beside each layer name to toggle it on or off.
 
 ### Visual Modes (left panel)
 
-| Mode | Effect |
-| --- | --- |
-| **NORMAL** | Default rendering |
-| **CRT** | Scanlines + vignette + green tint |
-| **NV** | Night Vision — green monochrome with film grain |
-| **FLIR** | Thermal palette — black → purple → red → yellow → white |
+| Mode       | Effect                                                  |
+| ---------- | ------------------------------------------------------- |
+| **NORMAL** | Default rendering                                       |
+| **CRT**    | Scanlines + vignette + green tint                       |
+| **NV**     | Night Vision — green monochrome with film grain         |
+| **FLIR**   | Thermal palette — black → purple → red → yellow → white |
 
 ### Weather Overlays (left panel)
 
 Requires `VITE_OWM_API_KEY` set in `.env`. Multiple overlays can be active simultaneously.
 
-| Overlay | Description |
-| --- | --- |
-| **Clouds** | Cloud cover (opacity-based) |
-| **Rain** | Precipitation intensity |
-| **Wind** | Wind speed and direction |
-| **Temp** | Surface temperature gradient |
+| Overlay      | Description                   |
+| ------------ | ----------------------------- |
+| **Clouds**   | Cloud cover (opacity-based)   |
+| **Rain**     | Precipitation intensity       |
+| **Wind**     | Wind speed and direction      |
+| **Temp**     | Surface temperature gradient  |
 | **Pressure** | Atmospheric pressure contours |
 
 ### Camera Presets (bottom bar)
@@ -223,20 +223,20 @@ Geospatial Tracker/
 
 ## Configuration
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `OPENSKY_CLIENT_ID` | Recommended | — | OAuth2 client ID from OpenSky account settings (preferred auth method) |
-| `OPENSKY_CLIENT_SECRET` | Recommended | — | OAuth2 client secret paired with the above |
-| `OPENSKY_USERNAME` | No | — | Legacy Basic Auth username (used only if OAuth2 credentials are absent) |
-| `OPENSKY_PASSWORD` | No | — | Legacy Basic Auth password |
-| `ADSB_API_KEY` | No | — | ADS-B Exchange key; falls back to ICAO filter without it |
-| `POLLING_INTERVAL_SECONDS` | No | `10` | How often to fetch all data sources |
-| `MAX_SATELLITES` | No | `500` | Max TLE records sent per broadcast (backend cap) |
-| `TRAIL_MAX_LENGTH` | No | `10` | Max position history points per aircraft (≈ 10 s each) |
-| `METADATA_FETCH_PER_CYCLE` | No | `5` | Max new aircraft typecodes fetched per broadcast cycle |
-| `REDIS_URL` | No | — | Redis connection string (e.g. `redis://localhost:6379/0`); leave empty to disable — all caches remain in-memory only |
-| `VITE_WS_URL` | No | `ws://localhost:8000/ws/live` | WebSocket URL override (frontend) |
-| `VITE_OWM_API_KEY` | No | — | OpenWeatherMap API key; enables weather tile overlays (free tier) |
+| Variable                   | Required    | Default                       | Description                                                                                                          |
+| -------------------------- | ----------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `OPENSKY_CLIENT_ID`        | Recommended | —                             | OAuth2 client ID from OpenSky account settings (preferred auth method)                                               |
+| `OPENSKY_CLIENT_SECRET`    | Recommended | —                             | OAuth2 client secret paired with the above                                                                           |
+| `OPENSKY_USERNAME`         | No          | —                             | Legacy Basic Auth username (used only if OAuth2 credentials are absent)                                              |
+| `OPENSKY_PASSWORD`         | No          | —                             | Legacy Basic Auth password                                                                                           |
+| `ADSB_API_KEY`             | No          | —                             | ADS-B Exchange key; falls back to ICAO filter without it                                                             |
+| `POLLING_INTERVAL_SECONDS` | No          | `10`                          | How often to fetch all data sources                                                                                  |
+| `MAX_SATELLITES`           | No          | `500`                         | Max TLE records sent per broadcast (backend cap)                                                                     |
+| `TRAIL_MAX_LENGTH`         | No          | `10`                          | Max position history points per aircraft (≈ 10 s each)                                                               |
+| `METADATA_FETCH_PER_CYCLE` | No          | `5`                           | Max new aircraft typecodes fetched per broadcast cycle                                                               |
+| `REDIS_URL`                | No          | —                             | Redis connection string (e.g. `redis://localhost:6379/0`); leave empty to disable — all caches remain in-memory only |
+| `VITE_WS_URL`              | No          | `ws://localhost:8000/ws/live` | WebSocket URL override (frontend)                                                                                    |
+| `VITE_OWM_API_KEY`         | No          | —                             | OpenWeatherMap API key; enables weather tile overlays (free tier)                                                    |
 
 ---
 
@@ -251,11 +251,11 @@ pytest tests/ -v
 
 ## API Endpoints
 
-| Endpoint | Method | Description |
-| --- | --- | --- |
-| `/health` | GET | Returns connection count and polling interval |
-| `/health/detailed` | GET | Per-source status: last-success timestamp, rate-limit state for OpenSky / CelesTrak / USGS / ADS-B |
-| `/ws/live` | WebSocket | WorldPayload pushed every 10 s |
+| Endpoint           | Method    | Description                                                                                        |
+| ------------------ | --------- | -------------------------------------------------------------------------------------------------- |
+| `/health`          | GET       | Returns connection count and polling interval                                                      |
+| `/health/detailed` | GET       | Per-source status: last-success timestamp, rate-limit state for OpenSky / CelesTrak / USGS / ADS-B |
+| `/ws/live`         | WebSocket | WorldPayload pushed every 10 s                                                                     |
 
 **WebSocket message format:**
 
@@ -298,10 +298,10 @@ Satellite data is sent as raw TLE strings. The frontend uses [satellite.js](http
 
 ### OpenSky Network
 
-| Access type | Limit | How to enable |
-| --- | --- | --- |
-| Anonymous | 400 credits/day (~40 requests) | Default, no setup needed |
-| Registered (free) | 4,000 credits/day | Add credentials to `.env` |
+| Access type       | Limit                          | How to enable             |
+| ----------------- | ------------------------------ | ------------------------- |
+| Anonymous         | 400 credits/day (~40 requests) | Default, no setup needed  |
+| Registered (free) | 4,000 credits/day              | Add credentials to `.env` |
 
 At 10 s polling, anonymous access far exceeds the daily credit limit — aircraft will consistently return 0 results. Register a free account at [opensky-network.org](https://opensky-network.org) and add credentials to `.env`.
 
