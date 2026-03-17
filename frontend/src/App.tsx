@@ -7,6 +7,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useHealthPoll } from "./hooks/useHealthPoll";
 import type { LayerVisibility, VisualMode, WeatherLayers } from "./types";
+import settings from "./settings";
 
 const WS_URL = (import.meta.env.VITE_WS_URL as string) ?? "ws://localhost:8000/ws/live";
 
@@ -16,6 +17,7 @@ const DEFAULT_LAYERS: LayerVisibility = {
   satellites: true,
   earthquakes: true,
   trails: true,
+  heatmap: false,
 };
 
 const DEFAULT_WEATHER: WeatherLayers = {
@@ -33,6 +35,7 @@ export default function App(): React.ReactElement {
   const [layers, setLayers] = useState<LayerVisibility>(DEFAULT_LAYERS);
   const [visualMode, setVisualMode] = useState<VisualMode>("normal");
   const [weatherLayers, setWeatherLayers] = useState<WeatherLayers>(DEFAULT_WEATHER);
+  const [altitudeRange, setAltitudeRange] = useState<[number, number]>([0, settings.HEATMAP_ALT_MAX]);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
 
   const lastUpdated = useMemo(
@@ -72,6 +75,7 @@ export default function App(): React.ReactElement {
           visualMode={visualMode}
           weatherLayers={weatherLayers}
           onViewerReady={handleViewerReady}
+          altitudeRange={altitudeRange}
         />
       </ErrorBoundary>
       <ControlPanel
@@ -85,6 +89,8 @@ export default function App(): React.ReactElement {
         weatherLayers={weatherLayers}
         onWeatherToggle={handleWeatherToggle}
         health={health}
+        altitudeRange={altitudeRange}
+        onAltitudeRangeChange={setAltitudeRange}
       />
       <CameraPresets viewer={viewerRef.current} />
     </div>

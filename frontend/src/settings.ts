@@ -13,6 +13,12 @@ const settings = {
 
   /** Duration of the satellite trail polyline shown on the globe (seconds = 30 min) */
   SATELLITE_TRAIL_TIME_SEC: 1_800,
+
+  /** Altitude ceiling (metres) for the heatmap slider */
+  HEATMAP_ALT_MAX: 13_000,
+
+  /** Grid cell size (degrees) for aircraft density accumulation */
+  HEATMAP_GRID_DEG: 1,
 } as const;
 
 export default settings;

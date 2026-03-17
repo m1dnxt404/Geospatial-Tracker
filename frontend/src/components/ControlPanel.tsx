@@ -1,5 +1,6 @@
 import React from "react";
 import type { LayerVisibility, VisualMode, ConnectionStatus, WeatherLayerKey, WeatherLayers, HealthSources, SourceStatus } from "../types";
+import settings from "../settings";
 
 interface ControlPanelProps {
   counts: {
@@ -17,6 +18,8 @@ interface ControlPanelProps {
   weatherLayers: WeatherLayers;
   onWeatherToggle: (layer: WeatherLayerKey) => void;
   health?: HealthSources | null;
+  altitudeRange: [number, number];
+  onAltitudeRangeChange: (range: [number, number]) => void;
 }
 
 const LAYER_SOURCE: Partial<Record<keyof LayerVisibility, keyof HealthSources>> = {
@@ -47,6 +50,7 @@ const LAYER_CONFIG: Array<{
   { key: "satellites", label: "Satellites", icon: "◎", color: "#00FFFF" },
   { key: "earthquakes", label: "Earthquakes", icon: "⬡", color: "#FF8C00" },
   { key: "trails", label: "Trails", icon: "—", color: "#87CEEB" },
+  { key: "heatmap", label: "Heatmap", icon: "▦", color: "#FF6B35" },
 ];
 
 const WEATHER_CONFIG: Array<{
@@ -87,6 +91,8 @@ export function ControlPanel({
   weatherLayers,
   onWeatherToggle,
   health,
+  altitudeRange,
+  onAltitudeRangeChange,
 }: ControlPanelProps): React.ReactElement {
   const totalTracked =
     counts.aircraft + counts.military + counts.satellites + counts.earthquakes;
@@ -137,10 +143,45 @@ export function ControlPanel({
             }} />
           )}
           <span style={{ ...styles.layerCount, color: layers[key] ? color : "#475569" }}>
-            {counts[key].toLocaleString()}
+            {(counts as Record<string, number | undefined>)[key]?.toLocaleString() ?? ""}
           </span>
         </div>
       ))}
+
+      {layers.heatmap && (
+        <div style={styles.altSliderBlock}>
+          <div style={styles.altSliderHeader}>
+            <span style={styles.altSliderLabel}>ALT RANGE</span>
+            <span style={styles.altSliderValue}>
+              {altitudeRange[0].toLocaleString()}m – {altitudeRange[1].toLocaleString()}m
+            </span>
+          </div>
+          <div style={styles.altSliderRow}>
+            <span style={styles.altSliderTick}>MIN</span>
+            <input
+              type="range"
+              min={0}
+              max={settings.HEATMAP_ALT_MAX}
+              step={500}
+              value={altitudeRange[0]}
+              onChange={e => onAltitudeRangeChange([+e.target.value, altitudeRange[1]])}
+              style={styles.altSlider}
+            />
+          </div>
+          <div style={styles.altSliderRow}>
+            <span style={styles.altSliderTick}>MAX</span>
+            <input
+              type="range"
+              min={0}
+              max={settings.HEATMAP_ALT_MAX}
+              step={500}
+              value={altitudeRange[1]}
+              onChange={e => onAltitudeRangeChange([altitudeRange[0], +e.target.value])}
+              style={styles.altSlider}
+            />
+          </div>
+        </div>
+      )}
 
       <div style={styles.divider} />
 
@@ -349,5 +390,44 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#475569",
     letterSpacing: "0.08em",
     paddingLeft: 16,
+  },
+  altSliderBlock: {
+    marginTop: 6,
+    marginBottom: 6,
+    paddingLeft: 4,
+  },
+  altSliderHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    marginBottom: 4,
+  },
+  altSliderLabel: {
+    fontSize: 9,
+    letterSpacing: "0.14em",
+    color: "#475569",
+  },
+  altSliderValue: {
+    fontSize: 9,
+    color: "#94A3B8",
+    letterSpacing: "0.04em",
+  },
+  altSliderRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 3,
+  },
+  altSliderTick: {
+    fontSize: 9,
+    color: "#475569",
+    letterSpacing: "0.08em",
+    width: 22,
+    flexShrink: 0,
+  },
+  altSlider: {
+    flex: 1,
+    accentColor: "#FF6B35",
+    cursor: "pointer",
   },
 };

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import * as Cesium from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import * as satellite from "satellite.js";
-import type { WorldPayload, LayerVisibility, VisualMode, WeatherLayerKey, WeatherLayers } from "../types";
+import type { WorldPayload, LayerVisibility, VisualMode, WeatherLayerKey, WeatherLayers, GeoJSONFeature } from "../types";
 import settings from "../settings";
 
 interface GlobeViewProps {
@@ -11,6 +11,7 @@ interface GlobeViewProps {
   visualMode: VisualMode;
   weatherLayers: WeatherLayers;
   onViewerReady?: (viewer: Cesium.Viewer) => void;
+  altitudeRange: [number, number];
 }
 
 interface SelectedInfo {
@@ -339,9 +340,55 @@ const AIRCRAFT_ICONS: Record<AircraftCategory, string> = {
   GENERAL:  createAircraftIcon("GENERAL"),
 };
 
+// ── Heatmap helpers ────────────────────────────────────────────────────────────
+
+function buildHeatmapCanvas(
+  features: GeoJSONFeature[],
+  altMin: number,
+  altMax: number,
+  gridDeg: number,
+): HTMLCanvasElement {
+  const cols = Math.ceil(360 / gridDeg);
+  const rows = Math.ceil(180 / gridDeg);
+  const density = new Uint32Array(cols * rows);
+
+  for (const f of features) {
+    const alt = (f.properties.altitude as number | null) ?? 0;
+    if (alt < altMin || alt > altMax) continue;
+    const [lon, lat] = f.geometry.coordinates as [number, number];
+    const col = Math.floor((lon + 180) / gridDeg);
+    const row = Math.floor((90 - lat) / gridDeg);
+    if (col >= 0 && col < cols && row >= 0 && row < rows)
+      density[row * cols + col]++;
+  }
+
+  const maxDensity = Math.max(...density, 1);
+  const canvas = document.createElement("canvas");
+  canvas.width = cols;
+  canvas.height = rows;
+  const ctx = canvas.getContext("2d")!;
+  const img = ctx.createImageData(cols, rows);
+
+  for (let i = 0; i < density.length; i++) {
+    if (!density[i]) continue;
+    const t = density[i] / maxDensity;
+    let r: number, g: number, b: number;
+    if      (t < 0.25) { r = 0;   g = Math.round(t * 4 * 255);                   b = 255; }
+    else if (t < 0.5)  { r = 0;   g = 255; b = Math.round((1 - (t - 0.25) * 4) * 255); }
+    else if (t < 0.75) { r = Math.round((t - 0.5) * 4 * 255); g = 255;  b = 0;   }
+    else               { r = 255; g = Math.round((1 - (t - 0.75) * 4) * 255); b = 0; }
+    img.data[i * 4]     = r;
+    img.data[i * 4 + 1] = g;
+    img.data[i * 4 + 2] = b;
+    img.data[i * 4 + 3] = Math.round(50 + t * 160);
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function GlobeView({ payload, layers, visualMode, weatherLayers, onViewerReady }: GlobeViewProps) {
+export default function GlobeView({ payload, layers, visualMode, weatherLayers, onViewerReady, altitudeRange }: GlobeViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
   const handlerRef = useRef<Cesium.ScreenSpaceEventHandler | null>(null);
@@ -359,6 +406,7 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
   const nvStageRef = useRef<Cesium.PostProcessStage | null>(null);
   const flirStageRef = useRef<Cesium.PostProcessStage | null>(null);
   const weatherLayerRefsRef = useRef<Partial<Record<WeatherLayerKey, Cesium.ImageryLayer>>>({});
+  const heatmapLayerRef = useRef<Cesium.ImageryLayer | null>(null);
 
   const [selectedInfo, setSelectedInfo] = useState<SelectedInfo | null>(null);
 
@@ -559,6 +607,7 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
       nvStageRef.current = null;
       flirStageRef.current = null;
       weatherLayerRefsRef.current = {};
+      heatmapLayerRef.current = null;
       if (!viewer.isDestroyed()) {
         viewer.destroy();
       }
@@ -833,6 +882,39 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
       if (refs[key]) refs[key]!.show = weatherLayers[key];
     });
   }, [weatherLayers]);
+
+  // ── Altitude heatmap ───────────────────────────────────────────────────────
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    if (heatmapLayerRef.current) {
+      viewer.imageryLayers.remove(heatmapLayerRef.current, true);
+      heatmapLayerRef.current = null;
+    }
+
+    if (!layers.heatmap || !payload) return;
+
+    const features = [
+      ...payload.aircraft.features,
+      ...payload.military.features,
+    ];
+    const canvas = buildHeatmapCanvas(
+      features,
+      altitudeRange[0],
+      altitudeRange[1],
+      settings.HEATMAP_GRID_DEG,
+    );
+
+    const layer = viewer.imageryLayers.addImageryProvider(
+      new Cesium.SingleTileImageryProvider({
+        url: canvas.toDataURL("image/png"),
+        rectangle: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90),
+      })
+    );
+    layer.alpha = 0.65;
+    heatmapLayerRef.current = layer;
+  }, [payload, layers.heatmap, altitudeRange]);
 
   return (
     <div style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>

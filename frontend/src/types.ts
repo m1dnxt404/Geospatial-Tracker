@@ -60,6 +60,7 @@ export interface LayerVisibility {
   satellites: boolean;
   earthquakes: boolean;
   trails: boolean;
+  heatmap: boolean;
 }
 
 export type VisualMode = "normal" | "crt" | "nightvision" | "flir";
