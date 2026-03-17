@@ -29,7 +29,7 @@ React Frontend
   │     5 icon categories (WIDE/NARROW/REGIONAL/HELI/GENERAL) rotated by heading
   │     GPU-side zoom switching via distanceDisplayCondition at 3,000 km
   │     Colour gradient green→yellow→cyan (0–15,000 m) via Cesium.Color.lerp()
-  │     Typecode fetched from OpenSky metadata API (backend, cached permanently)
+  │     Typecode + full model name (e.g. "Boeing 737-800") from OpenSky metadata API; permanently cached
   ├── Aircraft trails  — fading PolylineCollection, last 10 positions per icao24
   ├── Heatmap layer    — 1°×1° density grid rasterised to canvas → SingleTileImageryProvider
   ├── Military layer   — red silhouette icons / dots (ADS-B Exchange or ICAO filter)
@@ -54,7 +54,7 @@ React Frontend
 | Layer | Source | Endpoint | Cost | Refresh |
 | --- | --- | --- | --- | --- |
 | Aircraft | OpenSky Network | `/api/states/all` | Free | 10 s |
-| Aircraft type | OpenSky Metadata | `/api/metadata/aircraft/icao/{icao24}` | Free | Permanent cache |
+| Aircraft type & model | OpenSky Metadata | `/api/metadata/aircraft/icao/{icao24}` | Free | Permanent cache |
 | Military | ADS-B Exchange | `/v2/mil/` (fallback: ICAO prefix filter) | Free | 10 s |
 | Satellites | CelesTrak | `celestrak.org/pub/TLE/active.txt` | Free | TLE cache 30 min |
 | Earthquakes | USGS FDSNWS | `/fdsnws/event/1/query?minmagnitude=2.5` | Free | 60 s |
@@ -189,7 +189,7 @@ Geospatial Tracker/
 │   ├── ingestion/
 │   │   ├── opensky.py           # OpenSky Network — civil aircraft (global)
 │   │   ├── adsb_exchange.py     # ADS-B Exchange — military aircraft
-│   │   ├── aircraft_metadata.py # OpenSky metadata API — typecode cache (permanent)
+│   │   ├── aircraft_metadata.py # OpenSky metadata API — typecode + model name cache (permanent)
 │   │   ├── celestrak.py         # CelesTrak — raw TLE records (no server-side SGP4)
 │   │   └── usgs.py              # USGS FDSNWS — earthquake events
 │   ├── models/
@@ -270,7 +270,7 @@ pytest tests/ -v
         "icao24": "a1b2c3", "callsign": "UAL123", "origin_country": "United States",
         "altitude": 11278, "velocity": 245, "heading": 83, "vertical_rate": 0,
         "on_ground": false, "trail": [[-73.9, 40.6], [-73.85, 40.62], [-73.78, 40.64]],
-        "typecode": "B738"
+        "typecode": "B738", "model_name": "Boeing 737-800"
       }
     }]
   },
