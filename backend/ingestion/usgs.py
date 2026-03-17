@@ -2,6 +2,7 @@ import httpx
 import logging
 import time
 
+import cache as app_cache
 from models.schemas import EarthquakeEvent
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,14 @@ async def fetch_earthquakes() -> list[EarthquakeEvent]:
     if _cache and (now - _cache_time) < CACHE_TTL_SECONDS:
         return _cache
 
+    # On cold start try Redis before hitting the network.
+    if _cache_time == 0.0:
+        if cached := await app_cache.get("cache:earthquakes"):
+            _cache = [EarthquakeEvent(**d) for d in cached]
+            _cache_time = now
+            logger.info("Warmed earthquake cache from Redis: %d events", len(_cache))
+            return _cache
+
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(USGS_URL)
@@ -77,6 +86,11 @@ async def fetch_earthquakes() -> list[EarthquakeEvent]:
         _last_success_at = time.time()
         _backoff_seconds = 60.0
         logger.info("Fetched %d earthquake events from USGS", len(_cache))
+        await app_cache.set(
+            "cache:earthquakes",
+            [e.model_dump() for e in _cache],
+            ttl=CACHE_TTL_SECONDS,
+        )
         return _cache
 
     except httpx.TimeoutException:

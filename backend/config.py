@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     OPENSKY_USERNAME: str = ""
     OPENSKY_PASSWORD: str = ""
     ADSB_API_KEY: str = ""
+    REDIS_URL: str = ""  # e.g. "redis://localhost:6379/0" — leave empty to disable
     POLLING_INTERVAL_SECONDS: int = 10
     MAX_SATELLITES: int = 500
     TRAIL_MAX_LENGTH: int = 10

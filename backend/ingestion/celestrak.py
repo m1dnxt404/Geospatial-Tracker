@@ -3,6 +3,7 @@ import httpx
 import logging
 import time
 
+import cache as app_cache
 from models.schemas import TLERecord
 from config import settings
 
@@ -67,50 +68,64 @@ async def fetch_tles() -> list[TLERecord]:
         ] if _tle_cache else []
 
     if not _tle_cache or (now - _cache_time) > CACHE_TTL_SECONDS:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            for attempt in range(1, _MAX_RETRIES + 1):
-                try:
-                    resp = await client.get(
-                        CELESTRAK_URL,
-                        headers={"User-Agent": "OrbitalView-Tracker/2.0 (geospatial research)"},
-                    )
-                    resp.raise_for_status()
-                    _tle_cache = _parse_tle_text(resp.text)
-                    _cache_time = now
-                    _last_success_at = time.time()
-                    _backoff_seconds = 60.0
-                    logger.info("Refreshed TLE cache: %d entries", len(_tle_cache))
-                    break
-                except (httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
-                    if attempt < _MAX_RETRIES:
-                        delay = _RETRY_BACKOFF * attempt
-                        logger.warning(
-                            "CelesTrak timeout (attempt %d/%d), retrying in %.0fs: %s",
-                            attempt, _MAX_RETRIES, delay, exc,
+        # On cold start (cache never populated in this process) try Redis first.
+        if _cache_time == 0.0:
+            if cached := await app_cache.get("cache:tles"):
+                _tle_cache = [tuple(r) for r in cached]
+                _cache_time = now
+                logger.info("Warmed TLE cache from Redis: %d entries", len(_tle_cache))
+
+        # Still needs a network fetch (empty or TTL truly expired)?
+        if not _tle_cache or (now - _cache_time) > CACHE_TTL_SECONDS:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                for attempt in range(1, _MAX_RETRIES + 1):
+                    try:
+                        resp = await client.get(
+                            CELESTRAK_URL,
+                            headers={"User-Agent": "OrbitalView-Tracker/2.0 (geospatial research)"},
                         )
-                        await asyncio.sleep(delay)
-                    else:
-                        logger.exception("CelesTrak fetch failed after %d attempts", _MAX_RETRIES)
+                        resp.raise_for_status()
+                        _tle_cache = _parse_tle_text(resp.text)
+                        _cache_time = now
+                        _last_success_at = time.time()
+                        _backoff_seconds = 60.0
+                        logger.info("Refreshed TLE cache: %d entries", len(_tle_cache))
+                        await app_cache.set(
+                            "cache:tles",
+                            [list(t) for t in _tle_cache],
+                            ttl=CACHE_TTL_SECONDS,
+                        )
+                        break
+                    except (httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
+                        if attempt < _MAX_RETRIES:
+                            delay = _RETRY_BACKOFF * attempt
+                            logger.warning(
+                                "CelesTrak timeout (attempt %d/%d), retrying in %.0fs: %s",
+                                attempt, _MAX_RETRIES, delay, exc,
+                            )
+                            await asyncio.sleep(delay)
+                        else:
+                            logger.exception("CelesTrak fetch failed after %d attempts", _MAX_RETRIES)
+                            if not _tle_cache:
+                                return []
+                    except httpx.HTTPStatusError as exc:
+                        if exc.response.status_code == 429:
+                            _rate_limited_until = time.monotonic() + _backoff_seconds
+                            logger.warning("Rate limited by CelesTrak — backing off for %ds", int(_backoff_seconds))
+                            _backoff_seconds = min(_backoff_seconds * 2, _MAX_RATE_LIMIT_BACKOFF)
+                            return [
+                                TLERecord(norad_id=l1[2:7].strip(), name=name, line1=l1, line2=l2)
+                                for name, l1, l2 in _tle_cache[:settings.MAX_SATELLITES]
+                            ] if _tle_cache else []
+                        logger.exception("CelesTrak fetch failed: %s", exc)
                         if not _tle_cache:
                             return []
-                except httpx.HTTPStatusError as exc:
-                    if exc.response.status_code == 429:
-                        _rate_limited_until = time.monotonic() + _backoff_seconds
-                        logger.warning("Rate limited by CelesTrak — backing off for %ds", int(_backoff_seconds))
-                        _backoff_seconds = min(_backoff_seconds * 2, _MAX_RATE_LIMIT_BACKOFF)
-                        return [
-                            TLERecord(norad_id=l1[2:7].strip(), name=name, line1=l1, line2=l2)
-                            for name, l1, l2 in _tle_cache[:settings.MAX_SATELLITES]
-                        ] if _tle_cache else []
-                    logger.exception("CelesTrak fetch failed: %s", exc)
-                    if not _tle_cache:
-                        return []
-                    break
-                except Exception as exc:
-                    logger.exception("CelesTrak fetch failed: %s", exc)
-                    if not _tle_cache:
-                        return []
-                    break
+                        break
+                    except Exception as exc:
+                        logger.exception("CelesTrak fetch failed: %s", exc)
+                        if not _tle_cache:
+                            return []
+                        break
 
     result = [
         TLERecord(norad_id=l1[2:7].strip(), name=name, line1=l1, line2=l2)

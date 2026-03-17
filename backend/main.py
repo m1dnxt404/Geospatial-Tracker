@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+import cache as app_cache
 from ingestion.opensky import fetch_aircraft, get_source_status as opensky_status
 from ingestion.adsb_exchange import fetch_military_aircraft, get_source_status as adsb_status
 from ingestion.celestrak import fetch_tles, get_source_status as celestrak_status
@@ -177,6 +178,12 @@ async def broadcast_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if settings.REDIS_URL:
+        try:
+            await app_cache.connect(settings.REDIS_URL)
+            logger.info("Redis connected: %s", settings.REDIS_URL)
+        except Exception as exc:
+            logger.warning("Redis unavailable — running without cache: %s", exc)
     task = asyncio.create_task(broadcast_loop())
     logger.info("OrbitalView backend started")
     yield

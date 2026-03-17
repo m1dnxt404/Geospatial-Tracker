@@ -4,6 +4,7 @@ import logging
 import time
 from typing import Optional
 
+import cache as app_cache
 from models.schemas import AircraftPosition
 from config import settings
 
@@ -151,6 +152,14 @@ async def fetch_aircraft() -> list[AircraftPosition]:
             logger.debug("fetch_aircraft: post-lock cache hit (%d aircraft)", len(_aircraft_cache))
             return _aircraft_cache
 
+        # On cold start try Redis before hitting the network.
+        if not _aircraft_cache:
+            if cached := await app_cache.get("cache:aircraft"):
+                _aircraft_cache = [AircraftPosition(**d) for d in cached]
+                _aircraft_cache_time = time.monotonic()
+                logger.info("Warmed aircraft cache from Redis: %d aircraft", len(_aircraft_cache))
+                return _aircraft_cache
+
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
                 if settings.OPENSKY_CLIENT_ID and settings.OPENSKY_CLIENT_SECRET:
@@ -179,6 +188,11 @@ async def fetch_aircraft() -> list[AircraftPosition]:
             _last_success_at = time.time()
             _backoff_seconds = 60.0
             logger.info("Fetched %d aircraft from OpenSky", len(result))
+            await app_cache.set(
+                "cache:aircraft",
+                [ac.model_dump() for ac in result],
+                ttl=int(AIRCRAFT_CACHE_TTL),
+            )
             return result
 
         except httpx.TimeoutException:

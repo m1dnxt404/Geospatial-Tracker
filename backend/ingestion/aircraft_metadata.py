@@ -4,6 +4,7 @@ import time
 
 import httpx
 
+import cache as app_cache
 from config import settings
 from ingestion.opensky import _get_bearer_token
 
@@ -13,6 +14,7 @@ METADATA_URL = "https://opensky-network.org/api/metadata/aircraft/icao/{}"
 
 # Permanent in-memory cache — aircraft type doesn't change, so no TTL needed.
 _typecode_cache: dict[str, str] = {}  # icao24 → typecode (empty string = unknown/failed)
+_redis_loaded: bool = False  # True after one-time bulk load from Redis
 
 _rate_limited_until: float = 0.0
 _backoff_seconds: float = 60.0
@@ -25,6 +27,16 @@ async def fetch_new_typecodes(icao24_list: list[str]) -> None:
     Capped at settings.METADATA_FETCH_PER_CYCLE requests per call to avoid rate-limiting.
     On any error or 404, caches an empty string to prevent retrying the same aircraft.
     """
+    global _redis_loaded
+
+    # One-time bulk load from Redis on first call — restores typecodes across restarts.
+    if not _redis_loaded:
+        _redis_loaded = True
+        stored = await app_cache.hgetall("meta:typecodes")
+        if stored:
+            _typecode_cache.update(stored)
+            logger.info("Loaded %d typecodes from Redis", len(stored))
+
     now = time.monotonic()
     if now < _rate_limited_until:
         logger.info("OpenSky metadata rate-limited — skipping for %ds", int(_rate_limited_until - now))
@@ -60,7 +72,9 @@ async def _fetch_one(client: httpx.AsyncClient, icao24: str) -> None:
 
         if resp.status_code == 200:
             data = resp.json()
-            _typecode_cache[icao24] = (data.get("typecode") or "").strip().upper()
+            typecode = (data.get("typecode") or "").strip().upper()
+            _typecode_cache[icao24] = typecode
+            await app_cache.hset("meta:typecodes", icao24, typecode)
         elif resp.status_code == 429:
             global _rate_limited_until, _backoff_seconds
             _rate_limited_until = time.monotonic() + _backoff_seconds
