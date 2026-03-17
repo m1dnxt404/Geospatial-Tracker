@@ -19,6 +19,9 @@ const settings = {
 
   /** Grid cell size (degrees) for aircraft density accumulation */
   HEATMAP_GRID_DEG: 1,
+
+  /** Altitude ceiling (metres) for the colour gradient — aircraft above this use the top colour */
+  ALT_GRADIENT_MAX: 15_000,
 } as const;
 
 export default settings;

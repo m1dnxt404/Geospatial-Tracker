@@ -340,6 +340,20 @@ const AIRCRAFT_ICONS: Record<AircraftCategory, string> = {
   GENERAL:  createAircraftIcon("GENERAL"),
 };
 
+// ── Altitude colour gradient ───────────────────────────────────────────────────
+
+const ALT_COLOR_LOW  = Cesium.Color.fromCssColorString("#22C55E"); // green  — ground level
+const ALT_COLOR_MID  = Cesium.Color.fromCssColorString("#FFD700"); // yellow — mid altitude
+const ALT_COLOR_HIGH = Cesium.Color.fromCssColorString("#00E5FF"); // cyan   — cruise level
+
+function altitudeColor(altM: number): Cesium.Color {
+  const t = Math.min(Math.max(altM / settings.ALT_GRADIENT_MAX, 0), 1);
+  if (t < 0.5) {
+    return Cesium.Color.lerp(ALT_COLOR_LOW, ALT_COLOR_MID, t * 2, new Cesium.Color());
+  }
+  return Cesium.Color.lerp(ALT_COLOR_MID, ALT_COLOR_HIGH, (t - 0.5) * 2, new Cesium.Color());
+}
+
 // ── Heatmap helpers ────────────────────────────────────────────────────────────
 
 function buildHeatmapCanvas(
@@ -639,12 +653,7 @@ export default function GlobeView({ payload, layers, visualMode, weatherLayers, 
       const [lon, lat] = f.geometry.coordinates as [number, number];
       const alt = (f.properties.altitude as number | null) ?? 0;
       const clampedAlt = Math.max(alt, 0);
-      const color =
-        alt > 9000
-          ? Cesium.Color.fromCssColorString("#00E5FF")
-          : alt > 4000
-          ? Cesium.Color.fromCssColorString("#87CEEB")
-          : Cesium.Color.WHITE;
+      const color = altitudeColor(alt);
       const pos = Cesium.Cartesian3.fromDegrees(lon, lat, clampedAlt);
       const id: SelectedInfo = { type: "aircraft", data: f.properties };
 
