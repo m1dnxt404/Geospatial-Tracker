@@ -13,8 +13,9 @@ logger = logging.getLogger(__name__)
 METADATA_URL = "https://opensky-network.org/api/metadata/aircraft/icao/{}"
 
 # Permanent in-memory cache — aircraft type doesn't change, so no TTL needed.
-_typecode_cache: dict[str, str] = {}  # icao24 → typecode (empty string = unknown/failed)
-_redis_loaded: bool = False  # True after one-time bulk load from Redis
+_typecode_cache: dict[str, str] = {}   # icao24 → typecode (empty string = unknown/failed)
+_model_cache: dict[str, str] = {}      # icao24 → "Manufacturer Model" (empty string = unknown/failed)
+_redis_loaded: bool = False            # True after one-time bulk load from Redis
 
 _rate_limited_until: float = 0.0
 _backoff_seconds: float = 60.0
@@ -36,6 +37,10 @@ async def fetch_new_typecodes(icao24_list: list[str]) -> None:
         if stored:
             _typecode_cache.update(stored)
             logger.info("Loaded %d typecodes from Redis", len(stored))
+        stored_models = await app_cache.hgetall("meta:models")
+        if stored_models:
+            _model_cache.update(stored_models)
+            logger.info("Loaded %d model names from Redis", len(stored_models))
 
     now = time.monotonic()
     if now < _rate_limited_until:
@@ -75,6 +80,11 @@ async def _fetch_one(client: httpx.AsyncClient, icao24: str) -> None:
             typecode = (data.get("typecode") or "").strip().upper()
             _typecode_cache[icao24] = typecode
             await app_cache.hset("meta:typecodes", icao24, typecode)
+            manufacturer = (data.get("manufacturername") or "").strip()
+            model = (data.get("model") or "").strip()
+            model_name = f"{manufacturer} {model}".strip() if (manufacturer or model) else ""
+            _model_cache[icao24] = model_name
+            await app_cache.hset("meta:models", icao24, model_name)
         elif resp.status_code == 429:
             global _rate_limited_until, _backoff_seconds
             _rate_limited_until = time.monotonic() + _backoff_seconds
@@ -83,9 +93,16 @@ async def _fetch_one(client: httpx.AsyncClient, icao24: str) -> None:
             # Do not cache empty string — allow retry after cooldown
         else:
             _typecode_cache[icao24] = ""
+            _model_cache[icao24] = ""
     except Exception:
         _typecode_cache[icao24] = ""
+        _model_cache[icao24] = ""
 
 
 def get_typecode(icao24: str) -> str:
     return _typecode_cache.get(icao24, "")
+
+
+def get_model_name(icao24: str) -> str:
+    """Return the full model name (e.g. 'Boeing 737-800'), or '' if not yet fetched."""
+    return _model_cache.get(icao24, "")

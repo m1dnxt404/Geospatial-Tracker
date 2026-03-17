@@ -96,8 +96,12 @@ function InfoPanel({
   let rows: Array<[string, string]> = [];
 
   if (info.type === "aircraft" || info.type === "military") {
+    const modelName = fmt(d.model_name);
+    const typecode  = fmt(d.typecode);
+    const typeDisplay = modelName || typecode || "—";
     rows = [
       ["Callsign",    fmt(d.callsign) || "—"],
+      ["Type",        typeDisplay],
       ["ICAO24",      fmt(d.icao24)],
       ["Country",     fmt(d.origin_country) || "—"],
       ["Altitude",    d.altitude != null ? `${Number(d.altitude).toLocaleString()} m` : "—"],
@@ -153,7 +157,7 @@ const panelStyles: Record<string, React.CSSProperties> = {
     top: 16,
     right: 16,
     zIndex: 1000,
-    width: 230,
+    width: 260,
     backgroundColor: "rgba(2, 6, 23, 0.90)",
     border: "1px solid #1E293B",
     borderRadius: 8,

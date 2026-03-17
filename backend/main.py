@@ -12,7 +12,7 @@ from ingestion.opensky import fetch_aircraft, get_source_status as opensky_statu
 from ingestion.adsb_exchange import fetch_military_aircraft, get_source_status as adsb_status
 from ingestion.celestrak import fetch_tles, get_source_status as celestrak_status
 from ingestion.usgs import fetch_earthquakes, get_source_status as usgs_status
-from ingestion.aircraft_metadata import fetch_new_typecodes, get_typecode
+from ingestion.aircraft_metadata import fetch_new_typecodes, get_typecode, get_model_name
 from models.schemas import (
     AircraftPosition,
     EarthquakeEvent,
@@ -96,6 +96,7 @@ def _build_aircraft_geojson(aircraft_list: list[AircraftPosition]) -> GeoJSONFea
                     "on_ground": ac.on_ground,
                     "trail": list(_position_history.get(ac.icao24, [])),
                     "typecode": get_typecode(ac.icao24),
+                    "model_name": get_model_name(ac.icao24),
                 },
             )
         )
